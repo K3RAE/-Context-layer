@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>ContextLayer</title>
+</head>
+<body>
+  <div class="popup-container" id="popup-container">
+
+    <!-- ===== HEADER ===== -->
+    <header class="header" id="header">
+      <div class="header-left">
+        <h1 class="logo" id="logo-text">
+          <span class="logo-icon">◈</span> ContextLayer
+        </h1>
+      </div>
+      <div class="header-right">
+        <span class="status-dot" id="status-dot"></span>
+        <button class="icon-btn" id="btn-settings" aria-label="Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ===== BACKEND OFFLINE BANNER ===== -->
+    <div class="banner banner-offline hidden" id="banner-offline">
+      <span class="banner-icon">⚡</span>
+      <span>Backend offline — Compress &amp; Handoff still work locally</span>
+    </div>
+
+    <!-- ===== TOKEN BAR SECTION ===== -->
+    <section class="section glass-panel" id="section-tokens">
+      <div class="token-header">
+        <span class="token-label" id="token-label">Tokens</span>
+        <span class="token-count" id="token-count">0 / 0</span>
+      </div>
+      <div class="token-bar-track" id="token-bar-track">
+        <div class="token-bar-fill" id="token-bar-fill" style="width: 0%"></div>
+      </div>
+      <div class="token-meta">
+        <span class="model-info" id="model-info">No model detected</span>
+        <span class="token-badge" id="token-badge"></span>
+      </div>
+    </section>
+
+    <!-- ===== ACTION BUTTONS ===== -->
+    <section class="section" id="section-actions">
+      <div class="action-grid">
+        <button class="action-btn btn-purple" id="btn-compress">
+          <span class="btn-icon">⚡</span>
+          <span class="btn-text">Compress Now</span>
+          <span class="spinner hidden" id="spinner-compress"></span>
+        </button>
+        <button class="action-btn btn-blue" id="btn-handoff">
+          <span class="btn-icon">🔀</span>
+          <span class="btn-text">Generate Handoff</span>
+          <span class="spinner hidden" id="spinner-handoff"></span>
+        </button>
+        <button class="action-btn btn-teal" id="btn-save">
+          <span class="btn-icon">💾</span>
+          <span class="btn-text">Save to Memory</span>
+          <span class="spinner hidden" id="spinner-save"></span>
+        </button>
+        <button class="action-btn btn-amber" id="btn-recall">
+          <span class="btn-icon">🔍</span>
+          <span class="btn-text">Recall Memory</span>
+          <span class="spinner hidden" id="spinner-recall"></span>
+        </button>
+      </div>
+
+      <!-- Inline feedback areas -->
+      <div class="feedback" id="feedback-compress"></div>
+      <div class="feedback" id="feedback-handoff"></div>
+      <div class="feedback" id="feedback-save"></div>
+      <div class="feedback" id="feedback-recall"></div>
+    </section>
+
+    <!-- ===== HANDOFF NOTE SECTION ===== -->
+    <section class="section glass-panel hidden" id="section-handoff">
+      <div class="section-title">Handoff Note</div>
+      <textarea class="handoff-textarea" id="handoff-textarea" readonly rows="6" placeholder="Generated handoff note will appear here..."></textarea>
+      <div class="handoff-actions">
+        <button class="small-btn btn-blue" id="btn-copy-handoff">
+          <span id="btn-copy-text">Copy to Clipboard</span>
+        </button>
+        <label class="toggle-wrapper" id="toggle-autoinject-wrapper">
+          <span class="toggle-label">Auto-inject on next tab</span>
+          <div class="toggle-switch">
+            <input type="checkbox" id="toggle-autoinject" />
+            <span class="toggle-slider"></span>
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <!-- ===== RECALL SECTION ===== -->
+    <section class="section glass-panel hidden" id="section-recall">
+      <div class="section-title">Recall Memory</div>
+      <div class="recall-input-row">
+        <input type="text" class="recall-input" id="recall-input" placeholder="Search your memory..." />
+        <button class="small-btn btn-amber" id="btn-recall-search">Search</button>
+      </div>
+      <div class="recall-results" id="recall-results"></div>
+    </section>
+
+    <!-- ===== SETTINGS PANEL ===== -->
+    <section class="section glass-panel settings-panel hidden" id="section-settings">
+      <div class="section-title">Settings</div>
+      <div class="setting-row">
+        <label class="setting-label" for="input-backend-url">Backend URL</label>
+        <input type="text" class="setting-input" id="input-backend-url" value="http://localhost:8000" placeholder="http://localhost:8000" />
+      </div>
+      <div class="setting-row">
+        <label class="setting-label">Ollama</label>
+        <span class="status-pill" id="status-ollama">Unknown</span>
+      </div>
+      <div class="setting-row">
+        <label class="setting-label">LLMLingua</label>
+        <span class="status-pill" id="status-llmlingua">Unknown</span>
+      </div>
+      <div class="setting-row setting-row-danger">
+        <button class="small-btn btn-red" id="btn-clear-memory">Clear All Memory</button>
+      </div>
+      <div class="feedback" id="feedback-settings"></div>
+    </section>
+
+    <!-- ===== FOOTER ===== -->
+    <footer class="footer" id="footer">
+      <span class="footer-text">ContextLayer v1.0.0</span>
+    </footer>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
