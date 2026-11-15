@@ -56,7 +56,7 @@
   ]);
   const EXCLUDED_ZONES =
     'nav, header, footer, aside, form, button, select, textarea, script, style, noscript, ' +
-    'template, [contenteditable="true"], [role="navigation"], [role="banner"], ' +
+    'template, h1, h2, h3, h4, h5, h6, .sr-only, [contenteditable="true"], [role="navigation"], [role="banner"], ' +
     '[role="contentinfo"], [role="complementary"], [aria-hidden="true"], [hidden]';
   const TEXT_SKIP =
     'script, style, noscript, button, svg, template, [aria-hidden="true"], [hidden], .sr-only';

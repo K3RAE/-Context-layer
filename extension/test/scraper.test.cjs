@@ -55,6 +55,34 @@ test('site layer: falls through to a newer candidate selector', () => {
   assert.equal(r.messages.length, 2);
 });
 
+test('site layer: ChatGPT 2026 markup (search-unit keys) + hidden headings', () => {
+  const d = doc(`
+    <main>
+      <h4 class="sr-only" data-conversation-role="user">You said:</h4>
+      <div data-content-search-unit-key="fallback-turn-0:0:user"><div class="user-message-bubble">Draft a petition</div></div>
+      <h4 class="sr-only" data-conversation-role="assistant">ChatGPT said:</h4>
+      <div data-content-search-unit-key="fallback-turn-1:0:assistant"><div class="markdown">Here is a draft</div></div>
+    </main>`);
+  const r = S.scrape(d, 'chatgpt.com', config);
+  assert.equal(r.layer, 'site');
+  assert.deepEqual(r.messages.map((m) => m.role), ['user', 'assistant']);
+  // the same page without site rules: headings must not count as messages
+  const a = S.scrape(d, 'unknown.example', config);
+  assert.equal(a.layer, 'attributes');
+  assert.equal(a.messages.length, 2);
+});
+
+test('site layer: Claude 2026 assistant-message test id', () => {
+  const d = doc(`
+    <main>
+      <div data-testid="user-message">Q</div>
+      <div data-testid="assistant-message">A</div>
+    </main>`);
+  const r = S.scrape(d, 'claude.ai', config);
+  assert.equal(r.layer, 'site');
+  assert.equal(r.diagnostics.layers.site.assistantSelector, '[data-testid="assistant-message"]');
+});
+
 test('subdomains match and www. is ignored', () => {
   assert.equal(S.findSite('www.perplexity.ai', config).name, 'Perplexity');
   assert.equal(S.findSite('foo.chatgpt.com', config).name, 'ChatGPT');
