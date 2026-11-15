@@ -10,6 +10,7 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
+import { createRequire } from 'module';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = process.argv[2] ? resolve(process.argv[2]) : root;
@@ -55,7 +56,7 @@ for (const [size, f] of Object.entries(icons)) {
 }
 
 // Syntax-check JS
-for (const f of [...referenced].filter((f) => f.endsWith('.js')).concat(['popup.js'])) {
+for (const f of [...new Set([...referenced].filter((f) => f.endsWith('.js')).concat(['popup.js', 'scraper.js']))]) {
   const p = resolve(dir, f);
   if (!existsSync(p)) continue;
   try {
@@ -63,6 +64,26 @@ for (const f of [...referenced].filter((f) => f.endsWith('.js')).concat(['popup.
   } catch (err) {
     fail(`syntax error in ${f}: ${err.stderr?.toString() || err.message}`);
   }
+}
+
+// Files injected on demand / via importScripts must exist too
+for (const f of ['scraper.js', 'content.js', 'selectors.json']) {
+  if (!existsSync(resolve(dir, f))) fail(`missing file: ${f}`);
+}
+
+// selectors.json must pass the same validation remote updates go through
+try {
+  const require = createRequire(import.meta.url);
+  const scraper = require(resolve(dir, 'scraper.js'));
+  const raw = readFileSync(resolve(dir, 'selectors.json'), 'utf8');
+  const parsed = scraper.validateConfig(raw);
+  if (!parsed) fail('selectors.json failed validateConfig');
+  const declared = Object.keys(JSON.parse(raw).sites || {}).length;
+  if (parsed && Object.keys(parsed.sites).length !== declared) {
+    fail('selectors.json has site entries that validation dropped');
+  }
+} catch (err) {
+  fail(`could not validate selectors.json: ${err.message}`);
 }
 
 if (errors.length) {

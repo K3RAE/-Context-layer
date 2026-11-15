@@ -1,279 +1,177 @@
 /* ============================================================
  * ContextLayer — Content Script
- * Centralized DOM selectors + conversation scraper for 5 LLM sites
+ *
+ * Runs automatically on known AI chat sites, and is injected on demand
+ * (when the user opens the popup) on any other site. Reads the open
+ * conversation with the adaptive scraper (scraper.js, loaded first) and
+ * answers the popup. It only reads the page the user is looking at.
  * ============================================================ */
 
-// --------------- CENTRALIZED SITE CONFIG ---------------
-const SITE_CONFIG = {
-  'claude.ai': {
-    name: 'Claude',
-    contextWindow: 200000,
-    userSelector: '[data-testid="human-turn"]',
-    assistantSelector: '[data-testid="ai-turn"]',
-  },
-  'chatgpt.com': {
-    name: 'ChatGPT',
-    contextWindow: 128000,
-    userSelector: '[data-message-author-role="user"]',
-    assistantSelector: '[data-message-author-role="assistant"]',
-  },
-  'chat.openai.com': {
-    name: 'ChatGPT',
-    contextWindow: 128000,
-    userSelector: '[data-message-author-role="user"]',
-    assistantSelector: '[data-message-author-role="assistant"]',
-  },
-  'gemini.google.com': {
-    name: 'Gemini',
-    contextWindow: 1000000,
-    userSelector: '.user-query-text',
-    assistantSelector: '.model-response-text',
-  },
-  'perplexity.ai': {
-    name: 'Perplexity',
-    contextWindow: 128000,
-    userSelector: '.user-message',
-    assistantSelector: '.answer-text',
-  },
-  'grok.com': {
-    name: 'Grok',
-    contextWindow: 131072,
-    userSelector: '[data-testid="user-message"]',
-    assistantSelector: '[data-testid="assistant-message"]',
-  },
-};
+(function () {
+  'use strict';
 
-// --------------- SITE DETECTION ---------------
-function detectSite() {
-  const hostname = window.location.hostname.replace(/^www\./, '');
-  for (const [domain, config] of Object.entries(SITE_CONFIG)) {
-    if (hostname === domain || hostname.endsWith('.' + domain)) {
-      return { domain, ...config };
-    }
+  // Injected twice (manifest + on-demand)? Keep the first instance.
+  if (window.__contextLayerContentLoaded) return;
+  window.__contextLayerContentLoaded = true;
+
+  const Scraper = window.ContextLayerScraper;
+  if (!Scraper) {
+    console.error('[ContextLayer] scraper.js not loaded');
+    return;
   }
-  return null;
-}
 
-// --------------- CONVERSATION SCRAPER ---------------
-function scrapeConversation(siteConfig) {
-  const messages = [];
+  // --------------- SELECTOR CONFIG (from background) ---------------
+  let selectorConfig = null;
 
-  // Tag each element with its role so we can sort by DOM order
-  const tagged = [];
-
-  // Scrape user elements — isolated try/catch so assistant scraping still runs
-  try {
-    const userEls = document.querySelectorAll(siteConfig.userSelector);
-    userEls.forEach((el) => {
+  function loadConfig() {
+    return new Promise((resolve) => {
       try {
-        tagged.push({ role: 'user', el });
-      } catch (elErr) {
-        console.warn(`[ContextLayer] Skipping user element on ${siteConfig.name}:`, elErr.message);
+        chrome.runtime.sendMessage({ type: 'GET_SELECTOR_CONFIG' }, (cfg) => {
+          if (chrome.runtime.lastError) {
+            resolve(null);
+            return;
+          }
+          resolve(cfg || null);
+        });
+      } catch (_err) {
+        resolve(null);
       }
     });
-  } catch (err) {
-    console.error(`[ContextLayer] User selector failed for ${siteConfig.name}:`, err.message);
   }
 
-  // Scrape assistant elements — isolated try/catch so user data is preserved
-  try {
-    const assistantEls = document.querySelectorAll(siteConfig.assistantSelector);
-    assistantEls.forEach((el) => {
-      try {
-        tagged.push({ role: 'assistant', el });
-      } catch (elErr) {
-        console.warn(`[ContextLayer] Skipping assistant element on ${siteConfig.name}:`, elErr.message);
-      }
-    });
-  } catch (err) {
-    console.error(`[ContextLayer] Assistant selector failed for ${siteConfig.name}:`, err.message);
+  // --------------- TOKEN COUNTING (approximate) ---------------
+  function countTokens(text) {
+    if (!text) return 0;
+    const chunks = text.split(/[\s,.;:!?()[\]{}"'`\-/\\]+/).filter(Boolean);
+    return Math.ceil(chunks.length * 1.3);
   }
 
-  // Sort by DOM order using compareDocumentPosition
-  try {
-    tagged.sort((a, b) => {
-      const pos = a.el.compareDocumentPosition(b.el);
-      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-      return 0;
-    });
-  } catch (sortErr) {
-    console.warn(`[ContextLayer] DOM sort failed for ${siteConfig.name}:`, sortErr.message);
-  }
+  // --------------- COMBINED DATA GETTER ---------------
+  function getConversationData() {
+    const host = window.location.hostname.replace(/^www\./, '');
+    const result = Scraper.scrape(document, host, selectorConfig);
+    const site = result.site
+      ? { name: result.site.name, domain: result.site.domain, known: true }
+      : { name: host || 'This page', domain: host, known: false };
+    const contextWindow = (result.site && result.site.contextWindow) || Scraper.DEFAULT_CONTEXT_WINDOW;
 
-  // Extract text content — per-element try/catch so one bad node doesn't skip all
-  for (const item of tagged) {
-    try {
-      const content = (item.el.textContent || '').trim();
-      if (content.length > 0) {
-        messages.push({ role: item.role, content });
-      }
-    } catch (extractErr) {
-      console.warn(`[ContextLayer] Text extraction failed for ${item.role} element:`, extractErr.message);
-    }
-  }
+    const tokenCount = countTokens(result.messages.map((m) => m.content).join(' '));
+    const usage = contextWindow > 0 ? tokenCount / contextWindow : 0;
+    const warningLevel = usage > 0.9 ? 'critical' : usage > 0.75 ? 'warning' : 'ok';
 
-  return messages;
-}
-
-// --------------- TOKEN COUNTING (approximate) ---------------
-function countTokens(text) {
-  if (!text || text.length === 0) return 0;
-  // Split on whitespace and common punctuation boundaries
-  const chunks = text.split(/[\s,.;:!?()[\]{}"'`\-/\\]+/).filter(Boolean);
-  // Multiply by 1.3 to approximate sub-word tokenization
-  return Math.ceil(chunks.length * 1.3);
-}
-
-// --------------- COMBINED DATA GETTER ---------------
-function getConversationData() {
-  const site = detectSite();
-  if (!site) {
     return {
-      site: null,
-      messages: [],
-      tokenCount: 0,
-      contextWindow: 0,
-      warningLevel: 'ok',
+      site,
+      messages: result.messages,
+      tokenCount,
+      contextWindow,
+      warningLevel,
+      layer: result.layer,
+      diagnostics: Object.assign({}, result.diagnostics, {
+        extensionVersion: chrome.runtime.getManifest().version,
+      }),
     };
   }
 
-  const messages = scrapeConversation(site);
-  const fullText = messages.map((m) => m.content).join(' ');
-  const tokenCount = countTokens(fullText);
-  const contextWindow = site.contextWindow;
-  const usagePercent = contextWindow > 0 ? tokenCount / contextWindow : 0;
+  // --------------- MUTATION OBSERVER (debounced) ---------------
+  let scrapeTimeout = null;
+  let lastConversationData = null;
 
-  let warningLevel = 'ok';
-  if (usagePercent > 0.9) {
-    warningLevel = 'critical';
-  } else if (usagePercent > 0.75) {
-    warningLevel = 'warning';
-  }
-
-  return {
-    site: { name: site.name, domain: site.domain },
-    messages,
-    tokenCount,
-    contextWindow,
-    warningLevel,
-  };
-}
-
-// --------------- MUTATION OBSERVER (debounced) ---------------
-let scrapeTimeout = null;
-let lastConversationData = null;
-
-function debouncedScrape() {
-  if (scrapeTimeout) clearTimeout(scrapeTimeout);
-  scrapeTimeout = setTimeout(() => {
-    const data = getConversationData();
-    lastConversationData = data;
-
-    // Notify background with fresh data
-    try {
-      const maybePromise = chrome.runtime.sendMessage({
-        type: 'CONVERSATION_DATA',
-        ...data,
-      });
-      if (maybePromise && typeof maybePromise.catch === 'function') {
-        maybePromise.catch(() => {});
+  function debouncedScrape() {
+    if (scrapeTimeout) clearTimeout(scrapeTimeout);
+    scrapeTimeout = setTimeout(() => {
+      const data = getConversationData();
+      lastConversationData = data;
+      try {
+        const p = chrome.runtime.sendMessage({
+          type: 'CONVERSATION_DATA',
+          messages: data.messages,
+          tokenCount: data.tokenCount,
+          contextWindow: data.contextWindow,
+          site: data.site,
+          warningLevel: data.warningLevel,
+        });
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch (_err) {
+        // extension reloaded — this script is orphaned; stop observing
+        observer.disconnect();
       }
-    } catch (err) {
-      // Extension context may be invalidated — ignore
-    }
-
-    // Fire console warning if approaching limit
-    if (data.warningLevel === 'warning') {
-      console.warn(
-        `[ContextLayer] ⚠️ Token usage at ${Math.round(
-          (data.tokenCount / data.contextWindow) * 100
-        )}% of ${data.site?.name} context window (${data.tokenCount.toLocaleString()} / ${data.contextWindow.toLocaleString()})`
-      );
-    } else if (data.warningLevel === 'critical') {
-      console.error(
-        `[ContextLayer] 🚨 Token usage at ${Math.round(
-          (data.tokenCount / data.contextWindow) * 100
-        )}% — approaching ${data.site?.name} context limit!`
-      );
-    }
-  }, 2000);
-}
-
-// Observe DOM changes
-const observer = new MutationObserver(debouncedScrape);
-observer.observe(document.body || document.documentElement, {
-  childList: true,
-  subtree: true,
-});
-
-// Initial scrape
-debouncedScrape();
-
-// --------------- MESSAGE LISTENER ---------------
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === 'GET_CONVERSATION') {
-    // Return cached data or do a fresh scrape
-    const data = lastConversationData || getConversationData();
-    lastConversationData = data;
-    sendResponse(data);
-    return true; // keep channel open for async
+    }, 1500);
   }
 
-  if (message.type === 'INJECT_HANDOFF') {
-    try {
-      injectHandoffNote(message.note);
-      sendResponse({ success: true });
-    } catch (err) {
-      sendResponse({ success: false, error: err.message });
+  const observer = new MutationObserver(debouncedScrape);
+
+  // --------------- MESSAGE LISTENER ---------------
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.type === 'PING_CONTEXTLAYER') {
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (message.type === 'GET_CONVERSATION') {
+      // Always scrape fresh when the popup asks (after the config has loaded)
+      const respond = () => {
+        const data = getConversationData();
+        lastConversationData = data;
+        sendResponse(data);
+      };
+      if (selectorConfig) {
+        respond();
+        return false;
+      }
+      loadConfig().then((cfg) => {
+        selectorConfig = cfg;
+        respond();
+      });
+      return true; // async response
+    }
+
+    if (message.type === 'INJECT_HANDOFF') {
+      try {
+        const ok = injectHandoffNote(message.note);
+        sendResponse({ success: ok, error: ok ? undefined : 'Chat input not found' });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+      return false;
+    }
+
+    if (message.type === 'SELECTOR_CONFIG_UPDATED') {
+      selectorConfig = message.config || selectorConfig;
+      debouncedScrape();
+      return false;
+    }
+
+    return false;
+  });
+
+  // --------------- HANDOFF INJECTION ---------------
+  function injectHandoffNote(note) {
+    const host = window.location.hostname.replace(/^www\./, '');
+    const site = Scraper.findSite(host, selectorConfig);
+    const input = Scraper.findComposer(document, site);
+    if (!input) return false;
+
+    input.focus();
+    if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+      const proto = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement : window.HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(proto.prototype, 'value')?.set;
+      if (setter) setter.call(input, note);
+      else input.value = note;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      input.textContent = note;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, data: note }));
     }
     return true;
   }
 
-  return false;
-});
-
-// --------------- HANDOFF INJECTION ---------------
-function injectHandoffNote(note) {
-  const site = detectSite();
-  if (!site) return;
-
-  // Common chat input selectors per site
-  const inputSelectors = {
-    'claude.ai': '[contenteditable="true"].ProseMirror, div[contenteditable="true"]',
-    'chatgpt.com': '#prompt-textarea, textarea[data-id="root"]',
-    'chat.openai.com': '#prompt-textarea, textarea[data-id="root"]',
-    'gemini.google.com': '.ql-editor, div[contenteditable="true"]',
-    'perplexity.ai': 'textarea[placeholder], div[contenteditable="true"]',
-    'grok.com': 'textarea, div[contenteditable="true"]',
-  };
-
-  const selector = inputSelectors[site.domain];
-  if (!selector) return;
-
-  const input = document.querySelector(selector);
-  if (!input) return;
-
-  if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
-    const nativeSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype,
-      'value'
-    )?.set || Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value'
-    )?.set;
-    if (nativeSetter) {
-      nativeSetter.call(input, note);
-    } else {
-      input.value = note;
+  // --------------- START ---------------
+  loadConfig().then((cfg) => {
+    selectorConfig = cfg;
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     }
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-  } else {
-    // contenteditable
-    input.textContent = note;
-    input.dispatchEvent(new InputEvent('input', { bubbles: true, data: note }));
-  }
-}
-
-console.log('[ContextLayer] Content script loaded for', detectSite()?.name || 'unknown site');
+    debouncedScrape();
+  });
+})();

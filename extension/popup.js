@@ -57,6 +57,10 @@ const dom = {
   statusOllama: $('status-ollama'),
   statusLlmlingua: $('status-llmlingua'),
   btnClearMemory: $('btn-clear-memory'),
+  toggleSelectorUpdates: $('toggle-selector-updates'),
+  selectorStatus: $('selector-status'),
+  btnCheckSelectors: $('btn-check-selectors'),
+  btnCopyDiagnostics: $('btn-copy-diagnostics'),
   feedbackSettings: $('feedback-settings'),
 };
 
@@ -158,12 +162,44 @@ function updateTokenBar() {
   }
 }
 
-function updateModelInfo() {
-  if (currentSite) {
-    dom.modelInfo.textContent = `${currentSite.name} • ${currentSite.domain}`;
-  } else {
-    dom.modelInfo.textContent = 'No LLM site detected';
+const LAYER_LABELS = {
+  site: 'site rules',
+  attributes: 'auto-detected',
+  structural: 'auto-detected (layout)',
+  none: 'no conversation found',
+};
+
+let lastDiagnostics = null;
+
+function updateModelInfo(layer, count) {
+  if (!currentSite) {
+    dom.modelInfo.textContent = 'Open a chat page, then reopen this popup';
+    return;
   }
+  const how = LAYER_LABELS[layer] || '';
+  const msgs = typeof count === 'number' ? ` • ${count} msgs` : '';
+  dom.modelInfo.textContent = `${currentSite.name}${msgs}${how ? ' • ' + how : ''}`;
+  dom.modelInfo.title =
+    layer === 'none'
+      ? 'Could not find chat messages on this page. Use Settings → Copy diagnostics to report it.'
+      : `Read using ${how}`;
+}
+
+// Ask the tab's content script; if there is none (a site not in the
+// manifest), inject the scraper on demand. activeTab grants this for the
+// current tab only, because the user opened the popup on it.
+async function requestConversation(tab) {
+  try {
+    return await chrome.tabs.sendMessage(tab.id, { type: 'GET_CONVERSATION' });
+  } catch {
+    // no content script yet
+  }
+  if (!/^https?:/.test(tab.url || '')) return null;
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ['scraper.js', 'content.js'],
+  });
+  return chrome.tabs.sendMessage(tab.id, { type: 'GET_CONVERSATION' });
 }
 
 // --------------- LOAD CONVERSATION DATA ---------------
@@ -172,18 +208,75 @@ async function loadConversationData() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
 
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_CONVERSATION' });
+    const response = await requestConversation(tab);
     if (response) {
       currentConversation = response.messages || [];
       currentSite = response.site || null;
       tokenCount = response.tokenCount || 0;
       contextWindow = response.contextWindow || 0;
+      lastDiagnostics = response.diagnostics || null;
       updateTokenBar();
-      updateModelInfo();
+      updateModelInfo(response.layer, currentConversation.length);
+    } else {
+      dom.modelInfo.textContent = 'ContextLayer cannot read this page';
     }
   } catch {
-    // Content script not injected on this tab
-    dom.modelInfo.textContent = 'Navigate to a supported LLM site';
+    // e.g. chrome:// pages, the Web Store, or PDF viewers cannot be scripted
+    dom.modelInfo.textContent = 'ContextLayer cannot read this page';
+  }
+}
+
+// --------------- SELECTOR UPDATES & DIAGNOSTICS ---------------
+function describeSelectorStatus(status) {
+  if (!status) return 'Never checked';
+  const when = status.lastCheck ? new Date(status.lastCheck).toLocaleString() : '';
+  const v = status.currentVersion ? `v${status.currentVersion}` : '';
+  if (status.result === 'updated') return `Updated to ${v} (${when})`;
+  if (status.result === 'up-to-date') return `Up to date, ${v} (${when})`;
+  if (status.result === 'disabled') return 'Auto-update off';
+  if (status.result === 'error') return `Using ${v || 'bundled'}; last check failed (${when})`;
+  return v;
+}
+
+async function refreshSelectorStatus() {
+  const { cl_selector_status: status, cl_auto_update_selectors: auto } = await chrome.storage.local.get([
+    'cl_selector_status',
+    'cl_auto_update_selectors',
+  ]);
+  dom.toggleSelectorUpdates.checked = auto !== false;
+  dom.selectorStatus.textContent = describeSelectorStatus(status);
+}
+
+async function handleSelectorToggle() {
+  await chrome.storage.local.set({ cl_auto_update_selectors: dom.toggleSelectorUpdates.checked });
+  await refreshSelectorStatus();
+}
+
+async function handleCheckSelectors() {
+  dom.btnCheckSelectors.disabled = true;
+  try {
+    const status = await chrome.runtime.sendMessage({ type: 'CHECK_SELECTOR_UPDATES' });
+    dom.selectorStatus.textContent = describeSelectorStatus(status);
+    if (status && status.result === 'updated') await loadConversationData();
+  } catch (err) {
+    showFeedback(dom.feedbackSettings, `Check failed: ${err.message}`, 'error');
+  } finally {
+    dom.btnCheckSelectors.disabled = false;
+  }
+}
+
+async function handleCopyDiagnostics() {
+  // Counts and selector names only — never message text
+  const report = {
+    diagnostics: lastDiagnostics,
+    userAgent: navigator.userAgent,
+    when: new Date().toISOString(),
+  };
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+    showFeedback(dom.feedbackSettings, 'Diagnostics copied (no message text included)', 'success');
+  } catch {
+    showFeedback(dom.feedbackSettings, 'Failed to copy diagnostics', 'error');
   }
 }
 
@@ -436,6 +529,9 @@ function bindEvents() {
   dom.toggleAutoinject.addEventListener('change', handleAutoInjectToggle);
   dom.btnSettings.addEventListener('click', toggleSettings);
   dom.btnClearMemory.addEventListener('click', handleClearMemory);
+  dom.toggleSelectorUpdates.addEventListener('change', handleSelectorToggle);
+  dom.btnCheckSelectors.addEventListener('click', handleCheckSelectors);
+  dom.btnCopyDiagnostics.addEventListener('click', handleCopyDiagnostics);
 
   // Save backend URL on blur or Enter
   dom.inputBackendUrl.addEventListener('blur', handleBackendUrlChange);
@@ -480,6 +576,7 @@ async function init() {
 
   // Load conversation data from active tab
   await loadConversationData();
+  await refreshSelectorStatus();
 }
 
 document.addEventListener('DOMContentLoaded', init);

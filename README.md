@@ -3,7 +3,9 @@
 [![CI](https://github.com/K3RAE/-Context-layer/actions/workflows/ci.yml/badge.svg)](https://github.com/K3RAE/-Context-layer/actions/workflows/ci.yml)
 
 Local-first **context compression, conversation handoff and persistent memory**
-for LLM chat sites (Claude, ChatGPT, Gemini, Perplexity, Grok).
+for AI chat sites. It has built-in rules for Claude, ChatGPT, Gemini, Perplexity
+and Grok, and automatic detection for other chat pages (DeepSeek, Mistral,
+Copilot, Poe, and more). See [Site support](#site-support).
 
 It has two parts:
 
@@ -12,7 +14,13 @@ It has two parts:
 | `extension/` | Chrome extension (Manifest V3). Reads the conversation on the page, shows token usage, and calls the backend. |
 | `backend/` | FastAPI server on `localhost`. Compresses, builds handoff notes and stores "memory" facts in a local SQLite DB. |
 
-Nothing leaves your machine. [Ollama](https://ollama.com) and
+**Privacy:** your conversations are processed on your own machine. There are two exceptions:
+
+- If you point `OPENAI_BASE_URL` at a non-local server, conversations are sent there.
+- The extension downloads a small list of site rules (`selectors.json`, data only)
+  from this repository once a day. You can turn this off in the popup's settings.
+
+[Ollama](https://ollama.com), OpenAI-compatible servers and
 [LLMLingua-2](https://github.com/microsoft/LLMLingua) are **optional**: without them
 ContextLayer uses rule-based fallbacks.
 
@@ -126,6 +134,7 @@ Build a minified extension bundle into `extension/dist/` (optional):
 ```bash
 cd extension
 npm ci
+npm test          # scraper tests
 npm run check
 npm run build:prod
 ```
@@ -138,11 +147,58 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) does three things:
 
 See [`backend/README.md`](backend/README.md) for the API reference.
 
-## Known limitations
+## Site support
 
-The chat-page DOM selectors in `extension/content.js` (`SITE_CONFIG`) are
-written for each site's current markup. LLM sites change their HTML often. If
-a site shows 0 messages, update its `userSelector` / `assistantSelector` there.
+AI chat sites change their HTML often, which breaks extensions that depend on
+fixed CSS selectors. ContextLayer reads the conversation with three layers
+([`extension/scraper.js`](extension/scraper.js)). It tries each in order, and a
+layer only counts if its result looks like a real conversation:
+
+1. **Site rules.** Per-site CSS selectors from
+   [`extension/selectors.json`](extension/selectors.json). Each site has several
+   candidates, newest markup first.
+2. **Attribute detection.** Works on any site. It finds messages by role hints
+   in the markup, such as `user-message`, `data-role="assistant"`,
+   `model-response` or `aria-label="Your message"`, and ignores navigation,
+   avatars and menus.
+3. **Layout detection.** Finds the list of repeated message blocks and assigns
+   user/assistant roles from hints or alternation.
+
+The popup shows which layer read the chat ("site rules", "auto-detected" or
+"no conversation found").
+
+**Self-updating rules.** Once a day the extension fetches `selectors.json` from
+this repo's `main` branch. It uses that copy if its `version` is higher than the
+bundled one. The file is data only: it is validated, and it can change
+selectors but not code or permissions. To fix a broken site for every user:
+
+1. Open the site, press F12, and find an element that wraps each user message
+   and each AI message.
+2. Add the selectors to that site's lists in `extension/selectors.json`, newest
+   first, and **bump `version`**.
+3. Run `cd extension && npm test && npm run check`, then merge to `main`.
+   Installed extensions pick up the change within a day, or straight away via
+   Settings → **Check now**.
+
+**Any site.** Click the ContextLayer icon on any chat page. If the site isn't in
+the built-in list, the extension reads that tab on demand. This works only on
+the tab you clicked, using Chrome's `activeTab` permission; ContextLayer never
+gets blanket access to every site.
+
+**Reporting problems.** Use Settings → **Copy diagnostics**. It copies which
+layers ran and how many messages each one found, with no message text, which
+you can paste into an issue.
+
+**Limits.** Detection is best effort; no algorithm can guarantee it on a site
+whose markup it has never seen.
+
+- Rules for sites other than Claude, ChatGPT, Gemini, Perplexity and Grok start
+  empty, so those sites rely on automatic detection.
+- The site rules have not been verified against the live sites.
+- The scraper tests (`npm test`) use hand-written pages that imitate common
+  chat layouts.
+- ContextLayer only reads the page you have open in your own browser. It does
+  not crawl sites or get around their protections.
 
 ## License
 

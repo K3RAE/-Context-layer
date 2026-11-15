@@ -102,7 +102,9 @@ jobs:
           cache: npm
           cache-dependency-path: extension/package-lock.json
       - run: npm ci
-      - name: Validate manifest, icons and JS syntax
+      - name: Scraper tests (fixture pages)
+        run: npm test
+      - name: Validate manifest, icons, selectors.json and JS syntax
         run: npm run check
       - name: Build
         run: npm run build:prod

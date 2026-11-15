@@ -4,7 +4,7 @@
  * ============================================================ */
 
 import { build } from 'esbuild';
-import { cpSync, mkdirSync, existsSync } from 'fs';
+import { cpSync, mkdirSync, existsSync, rmSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -15,7 +15,8 @@ const isProduction =
   process.env.NODE_ENV === 'production' || process.argv.includes('--production');
 const outdir = resolve(__dirname, 'dist');
 
-// Ensure dist directory exists
+// Start from a clean dist directory
+rmSync(outdir, { recursive: true, force: true });
 mkdirSync(outdir, { recursive: true });
 
 async function buildAll() {
@@ -49,12 +50,12 @@ async function buildAll() {
   });
   console.log('  ✔ popup.js bundled');
 
-  // 3. Bundle background.js → dist/background.js (ESM for service worker)
+  // 3. Bundle background.js → dist/background.js (classic worker: uses importScripts)
   await build({
     entryPoints: [resolve(__dirname, 'background.js')],
     bundle: true,
     outfile: resolve(outdir, 'background.js'),
-    format: 'esm',
+    format: 'iife',
     platform: 'browser',
     target: ['chrome110'],
     minify: isProduction,
@@ -64,7 +65,8 @@ async function buildAll() {
   console.log('  ✔ background.js bundled');
 
   // 4. Copy static assets to dist/
-  const staticFiles = ['manifest.json', 'popup.html', 'styles.css'];
+  // scraper.js is loaded by importScripts / executeScript by name, so it is copied as-is
+  const staticFiles = ['manifest.json', 'popup.html', 'styles.css', 'scraper.js', 'selectors.json'];
   for (const file of staticFiles) {
     const src = resolve(__dirname, file);
     const dest = resolve(outdir, file);

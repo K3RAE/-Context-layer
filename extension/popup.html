@@ -132,6 +132,21 @@
         <label class="setting-label">LLMLingua</label>
         <span class="status-pill" id="status-llmlingua">Unknown</span>
       </div>
+      <div class="setting-row">
+        <label class="setting-label" for="toggle-selector-updates">Auto-update site rules</label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="toggle-selector-updates" checked />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label setting-hint" id="selector-status">Never checked</span>
+        <button class="small-btn btn-blue" id="btn-check-selectors">Check now</button>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label setting-hint">Messages not detected?</span>
+        <button class="small-btn btn-amber" id="btn-copy-diagnostics">Copy diagnostics</button>
+      </div>
       <div class="setting-row setting-row-danger">
         <button class="small-btn btn-red" id="btn-clear-memory">Clear All Memory</button>
       </div>
@@ -140,7 +155,7 @@
 
     <!-- ===== FOOTER ===== -->
     <footer class="footer" id="footer">
-      <span class="footer-text">ContextLayer v1.1.0</span>
+      <span class="footer-text">ContextLayer v1.2.0</span>
     </footer>
 
   </div>
