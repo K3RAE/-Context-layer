@@ -23,7 +23,7 @@ Windows, macOS and Linux and handle the virtual environment, dependencies and
 
 ```bash
 # Windows
-start.bat
+.\start.bat
 # macOS / Linux
 ./start.sh
 ```

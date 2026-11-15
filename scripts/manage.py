@@ -145,7 +145,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
             run([npm, "install", "--no-audit", "--no-fund"], cwd=EXTENSION)
             run([npm, "run", "build"], cwd=EXTENSION)
 
-    start_cmd = "start.bat" if IS_WINDOWS else "./start.sh"
+    start_cmd = r".\start.bat" if IS_WINDOWS else "./start.sh"
     print()
     info("Setup complete.")
     info(f"  1. Start the backend:     {start_cmd}")

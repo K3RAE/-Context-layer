@@ -42,14 +42,14 @@ cd ContextLayer
 
 | OS | Command |
 | --- | --- |
-| **Windows** | Double-click `start.bat` (or run `start.bat` in a terminal) |
+| **Windows** | Double-click `start.bat`, or run `.\start.bat` in a terminal (PowerShell needs the `.\`) |
 | **macOS / Linux** | `./start.sh` |
 
 The first run creates a virtual environment in `.venv/`, installs the
 dependencies and creates `backend/.env`. Later runs start in a couple of seconds.
 The API listens on <http://127.0.0.1:8000>. Check it with <http://127.0.0.1:8000/health>.
 
-To install without starting, run `setup.bat` / `./setup.sh`. Options:
+To install without starting, run `.\setup.bat` (Windows) or `./setup.sh`. Options:
 
 | Flag | Effect |
 | --- | --- |
@@ -125,7 +125,7 @@ All settings live in `backend/.env` (copied from [`backend/.env.example`](backen
 ## Development
 
 ```bash
-python scripts/manage.py setup --dev   # or: setup.bat --dev / ./setup.sh --dev
+python scripts/manage.py setup --dev   # or: .\setup.bat --dev / ./setup.sh --dev
 python scripts/manage.py test          # run the test-suite
 ```
 
