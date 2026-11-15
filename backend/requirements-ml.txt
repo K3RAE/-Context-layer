@@ -1,0 +1,5 @@
+# OPTIONAL: neural compression with LLMLingua-2.
+# Pulls in PyTorch + transformers (~2 GB) and downloads a ~700 MB model on
+# first use. Without it ContextLayer uses its rule-based compressor.
+-r requirements.txt
+llmlingua>=0.2.2

@@ -17,61 +17,38 @@ Chrome Extension  ──►  FastAPI backend (this)  ──►  Ollama (local LL
 
 ## Quick Start
 
-### 1. Install Python dependencies
+The easiest way is the one-command scripts in the repo root. They work on
+Windows, macOS and Linux and handle the virtual environment, dependencies and
+`.env` for you. See the [main README](../README.md).
 
 ```bash
-# Create and activate a virtual environment (recommended)
-python -m venv .venv
-
 # Windows
-.venv\Scripts\activate
-
+start.bat
 # macOS / Linux
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+./start.sh
 ```
 
-### 2. Install & start Ollama
-
-Download Ollama from [ollama.com](https://ollama.com/) and install it for your platform.
+### Manual setup
 
 ```bash
-# Start Ollama (if not running as a service)
-ollama serve
-
-# Pull recommended models (smallest → largest)
-ollama pull qwen2:0.5b       # Fast, good for compression
-ollama pull phi3-mini         # Balanced
-ollama pull llama3.2:3b       # Best accuracy for handoff & memory
+cd backend
+python -m venv .venv
+# Windows:      .venv\Scriptsctivate
+# macOS/Linux:  source .venv/bin/activate
+pip install -r requirements.txt          # core (small)
+# pip install -r requirements-ml.txt     # optional: LLMLingua-2 (PyTorch, large)
+cp .env.example .env                     # Windows: copy .env.example .env
+python main.py                           # serves on http://127.0.0.1:8000
 ```
 
-### 3. Configure environment
+### Ollama (optional)
 
 ```bash
-# Copy the example env file
-cp .env.example .env
-
-# Edit .env if you need to change defaults (port, Ollama URL, DB path)
+ollama pull llama3.2:3b     # best handoff quality
+ollama pull qwen2.5:0.5b    # smallest / fastest
 ```
 
-### 4. Start the backend
-
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-The API is now available at `http://localhost:8000`.
-
-### 5. Load the Chrome extension
-
-1. Open `chrome://extensions/` in Chrome.
-2. Enable **Developer mode** (top-right toggle).
-3. Click **Load unpacked** and select the `context-layer/extension/` directory.
-4. The ContextLayer icon should appear in your toolbar.
-
-### 6. Verify with curl
+### Verify with curl
 
 ```bash
 # Health check
@@ -145,17 +122,21 @@ ContextLayer is designed to work even when optional subsystems are unavailable:
 | LLMLingua-2 | Compression falls back to rule-based heuristics       |
 | SQLite DB   | Memory endpoints return 503                           |
 
+`/handoff` returns `"method": "ollama"` or `"rule_based"` so you can see which path ran.
+
 ## Project Structure
 
 ```
 backend/
-├── main.py             # FastAPI app, routes, middleware
+├── main.py             # FastAPI app, routes, middleware (python main.py to run)
 ├── models.py           # Pydantic request/response schemas
 ├── ollama_client.py    # Async Ollama HTTP wrapper
 ├── compressor.py       # LLMLingua-2 + rule-based compression
 ├── handoff.py          # Structured handoff extraction
 ├── memory.py           # SQLite knowledge graph
-├── requirements.txt    # Python dependencies
+├── requirements.txt    # Core Python dependencies
+├── requirements-ml.txt # Optional LLMLingua-2 (PyTorch)
+├── requirements-dev.txt# Test / lint tools
 ├── .env.example        # Environment variable template
 └── README.md           # This file
 ```

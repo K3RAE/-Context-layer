@@ -34,3 +34,8 @@ Thumbs.db
 .vscode/
 .idea/
 *.suo
+# Local tooling / CI scratch
+.ci-tmp/
+server.log
+node_modules/
+*.zip

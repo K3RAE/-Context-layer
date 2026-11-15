@@ -42,6 +42,10 @@ const dom = {
   btnCopyText: $('btn-copy-text'),
   toggleAutoinject: $('toggle-autoinject'),
 
+  sectionCompress: $('section-compress'),
+  compressTextarea: $('compress-textarea'),
+  btnCopyCompressed: $('btn-copy-compressed'),
+
   sectionRecall: $('section-recall'),
   recallInput: $('recall-input'),
   btnRecallSearch: $('btn-recall-search'),
@@ -92,6 +96,8 @@ async function checkHealth() {
     dom.bannerOffline.classList.add('hidden');
     dom.btnSave.disabled = false;
     dom.btnRecall.disabled = false;
+    dom.btnCompress.disabled = false;
+    dom.btnHandoff.disabled = false;
 
     // Update service statuses
     if (data.ollama !== undefined) {
@@ -109,6 +115,8 @@ async function checkHealth() {
     dom.statusDot.className = 'status-dot disconnected';
     dom.bannerOffline.classList.remove('hidden');
     dom.btnSave.disabled = true;
+    dom.btnCompress.disabled = true;
+    dom.btnHandoff.disabled = true;
     // Keep recall button enabled but will show error
     dom.statusOllama.textContent = 'Unknown';
     dom.statusOllama.className = 'status-pill';
@@ -194,16 +202,30 @@ async function handleCompress() {
   try {
     const data = await fetchFromBackend('/compress', {
       method: 'POST',
+      // First LLMLingua run may download its model; allow extra time
+      timeoutMs: 120000,
       body: JSON.stringify({
         messages: currentConversation,
         preserve_last_n: 4,
       }),
     });
 
-    const savedPct = data.saved_percent || data.compression_ratio || 0;
-    dom.tokenBadge.textContent = `${Math.round(savedPct)}% saved`;
+    const savedPct = Math.max(0, Math.round(data.saved_percent || 0));
+    dom.tokenBadge.textContent = `${savedPct}% saved`;
     dom.tokenBadge.classList.add('visible');
-    showFeedback(dom.feedbackCompress, `Compressed! ${Math.round(savedPct)}% tokens saved`, 'success');
+
+    // Show the compressed conversation so it can be pasted into a new chat
+    const compressedText = (data.compressed_messages || [])
+      .map((m) => `${(m.role || 'unknown').toUpperCase()}: ${m.content || ''}`)
+      .join('\n\n');
+    dom.compressTextarea.value = compressedText;
+    dom.sectionCompress.classList.remove('hidden');
+
+    showFeedback(
+      dom.feedbackCompress,
+      `Compressed ${data.original_tokens} → ${data.compressed_tokens} tokens (${savedPct}% saved, ${data.method})`,
+      'success'
+    );
   } catch (err) {
     showFeedback(dom.feedbackCompress, `Compress failed: ${err.message}`, 'error');
   } finally {
@@ -225,7 +247,7 @@ async function handleHandoff() {
     const sessionId = generateSessionId();
     const data = await fetchFromBackend('/handoff', {
       method: 'POST',
-      timeoutMs: 60000,
+      timeoutMs: 150000,
       body: JSON.stringify({
         messages: currentConversation,
         session_id: sessionId,
@@ -314,21 +336,43 @@ async function handleRecallSearch() {
       body: JSON.stringify({ query }),
     });
 
-    const results = data.results || data.memories || [];
-    if (results.length === 0) {
-      dom.recallResults.innerHTML = '<div class="recall-item">No memories found for this query.</div>';
+    const facts = data.facts || [];
+    if (facts.length === 0) {
+      dom.recallResults.appendChild(makeRecallItem(null, 'No memories found for this query.'));
     } else {
-      dom.recallResults.innerHTML = results
-        .map(
-          (r) =>
-            `<div class="recall-item"><strong>${r.source || 'Memory'}</strong>: ${r.content || r.text || JSON.stringify(r)}</div>`
-        )
-        .join('');
+      for (const f of facts) {
+        const label = f.source_llm ? `${f.source_llm}` : 'Memory';
+        const text = `${f.entity} ${String(f.relation || '').replace(/_/g, ' ')} ${f.target}`;
+        dom.recallResults.appendChild(makeRecallItem(label, text));
+      }
     }
   } catch (err) {
     showFeedback(dom.feedbackRecall, `Recall failed: ${err.message}`, 'error');
   } finally {
     setButtonLoading(dom.btnRecallSearch, dom.spinnerRecall, false);
+  }
+}
+
+// Build a recall result row without innerHTML (content comes from web pages)
+function makeRecallItem(label, text) {
+  const item = document.createElement('div');
+  item.className = 'recall-item';
+  if (label) {
+    const strong = document.createElement('strong');
+    strong.textContent = label;
+    item.appendChild(strong);
+    item.appendChild(document.createTextNode(': '));
+  }
+  item.appendChild(document.createTextNode(text));
+  return item;
+}
+
+async function handleCopyCompressed() {
+  try {
+    await navigator.clipboard.writeText(dom.compressTextarea.value);
+    showFeedback(dom.feedbackCompress, 'Compressed conversation copied', 'success');
+  } catch {
+    showFeedback(dom.feedbackCompress, 'Failed to copy to clipboard', 'error');
   }
 }
 
@@ -373,6 +417,7 @@ async function handleClearMemory() {
 
   try {
     await fetchFromBackend('/memory', { method: 'DELETE' });
+    dom.recallResults.textContent = '';
     showFeedback(dom.feedbackSettings, 'All memory cleared', 'success');
   } catch (err) {
     showFeedback(dom.feedbackSettings, `Clear failed: ${err.message}`, 'error');
@@ -387,6 +432,7 @@ function bindEvents() {
   dom.btnRecall.addEventListener('click', handleRecall);
   dom.btnRecallSearch.addEventListener('click', handleRecallSearch);
   dom.btnCopyHandoff.addEventListener('click', handleCopyHandoff);
+  dom.btnCopyCompressed.addEventListener('click', handleCopyCompressed);
   dom.toggleAutoinject.addEventListener('change', handleAutoInjectToggle);
   dom.btnSettings.addEventListener('click', toggleSettings);
   dom.btnClearMemory.addEventListener('click', handleClearMemory);

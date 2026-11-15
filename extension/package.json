@@ -1,14 +1,14 @@
 {
   "name": "contextlayer-extension",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
+  "description": "ContextLayer Chrome extension (Manifest V3)",
   "scripts": {
-    "build": "node esbuild.config.mjs"
-  },
-  "dependencies": {
-    "js-tiktoken": "^1.0.0"
+    "build": "node esbuild.config.mjs",
+    "build:prod": "node esbuild.config.mjs --production",
+    "check": "node scripts/check-extension.mjs"
   },
   "devDependencies": {
-    "esbuild": "^0.20.0"
+    "esbuild": "^0.25.0"
   }
 }

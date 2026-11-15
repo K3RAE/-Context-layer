@@ -1,7 +1,8 @@
-fastapi==0.111.0
-uvicorn==0.29.0
-llmlingua
-tiktoken
-httpx
-pydantic==2.7.0
-python-dotenv
+# Core runtime dependencies (small; no ML frameworks).
+# Optional LLMLingua-2 compression lives in requirements-ml.txt.
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.9,<3.0
+httpx>=0.27,<1.0
+python-dotenv>=1.0,<2.0
+tiktoken>=0.8

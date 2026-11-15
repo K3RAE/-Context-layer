@@ -6,6 +6,7 @@
 // --------------- SUPPORTED SITES ---------------
 const SUPPORTED_PATTERNS = [
   'claude.ai',
+  'chatgpt.com',
   'chat.openai.com',
   'gemini.google.com',
   'perplexity.ai',

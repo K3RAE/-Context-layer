@@ -30,7 +30,7 @@
     <!-- ===== BACKEND OFFLINE BANNER ===== -->
     <div class="banner banner-offline hidden" id="banner-offline">
       <span class="banner-icon">⚡</span>
-      <span>Backend offline — Compress &amp; Handoff still work locally</span>
+      <span>Backend offline — start it with <code>start.bat</code> / <code>./start.sh</code></span>
     </div>
 
     <!-- ===== TOKEN BAR SECTION ===== -->
@@ -78,6 +78,15 @@
       <div class="feedback" id="feedback-handoff"></div>
       <div class="feedback" id="feedback-save"></div>
       <div class="feedback" id="feedback-recall"></div>
+    </section>
+
+    <!-- ===== COMPRESSED OUTPUT SECTION ===== -->
+    <section class="section glass-panel hidden" id="section-compress">
+      <div class="section-title">Compressed Conversation</div>
+      <textarea class="handoff-textarea" id="compress-textarea" readonly rows="6" placeholder="Compressed conversation will appear here..."></textarea>
+      <div class="handoff-actions">
+        <button class="small-btn btn-purple" id="btn-copy-compressed">Copy to Clipboard</button>
+      </div>
     </section>
 
     <!-- ===== HANDOFF NOTE SECTION ===== -->
@@ -131,7 +140,7 @@
 
     <!-- ===== FOOTER ===== -->
     <footer class="footer" id="footer">
-      <span class="footer-text">ContextLayer v1.0.0</span>
+      <span class="footer-text">ContextLayer v1.1.0</span>
     </footer>
 
   </div>

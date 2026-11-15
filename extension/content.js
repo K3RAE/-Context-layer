@@ -11,6 +11,12 @@ const SITE_CONFIG = {
     userSelector: '[data-testid="human-turn"]',
     assistantSelector: '[data-testid="ai-turn"]',
   },
+  'chatgpt.com': {
+    name: 'ChatGPT',
+    contextWindow: 128000,
+    userSelector: '[data-message-author-role="user"]',
+    assistantSelector: '[data-message-author-role="assistant"]',
+  },
   'chat.openai.com': {
     name: 'ChatGPT',
     contextWindow: 128000,
@@ -166,10 +172,13 @@ function debouncedScrape() {
 
     // Notify background with fresh data
     try {
-      chrome.runtime.sendMessage({
+      const maybePromise = chrome.runtime.sendMessage({
         type: 'CONVERSATION_DATA',
         ...data,
       });
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch(() => {});
+      }
     } catch (err) {
       // Extension context may be invalidated — ignore
     }
@@ -193,7 +202,7 @@ function debouncedScrape() {
 
 // Observe DOM changes
 const observer = new MutationObserver(debouncedScrape);
-observer.observe(document.body, {
+observer.observe(document.body || document.documentElement, {
   childList: true,
   subtree: true,
 });
@@ -232,6 +241,7 @@ function injectHandoffNote(note) {
   // Common chat input selectors per site
   const inputSelectors = {
     'claude.ai': '[contenteditable="true"].ProseMirror, div[contenteditable="true"]',
+    'chatgpt.com': '#prompt-textarea, textarea[data-id="root"]',
     'chat.openai.com': '#prompt-textarea, textarea[data-id="root"]',
     'gemini.google.com': '.ql-editor, div[contenteditable="true"]',
     'perplexity.ai': 'textarea[placeholder], div[contenteditable="true"]',
