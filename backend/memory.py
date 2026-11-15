@@ -8,7 +8,6 @@ Stores facts extracted from conversations and recalls them via keyword search.
 import os
 import re
 import sqlite3
-import json
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -21,8 +20,14 @@ DB_PATH = os.path.join(_DEFAULT_DB_DIR, "memory.db")
 
 
 def _resolve_db_path(db_path: Optional[str] = None) -> str:
-    """Return the configured DB path or the default local memory DB."""
-    return db_path or DB_PATH
+    """Return the DB path to use.
+
+    Priority: explicit ``db_path`` argument > ``MEMORY_DB_PATH`` env var >
+    ``~/.contextlayer/memory.db``.  ``~`` and environment variables are
+    expanded so the same ``.env`` works on Windows, macOS and Linux.
+    """
+    path = db_path or os.getenv("MEMORY_DB_PATH") or DB_PATH
+    return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
 
 # ---------------------------------------------------------------------------
 # Database init
@@ -32,7 +37,9 @@ def _resolve_db_path(db_path: Optional[str] = None) -> str:
 def init_db(db_path: Optional[str] = None) -> None:
     """Create the memory database and tables if they don't exist."""
     path = _resolve_db_path(db_path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
     conn = sqlite3.connect(path)
     cursor = conn.cursor()
@@ -58,6 +65,8 @@ def init_db(db_path: Optional[str] = None) -> None:
             FOREIGN KEY (session_id) REFERENCES sessions(session_id)
         )
     """)
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_facts_session ON facts(session_id)")
 
     conn.commit()
     conn.close()
@@ -149,9 +158,11 @@ def store_session(
 ) -> Dict[str, Any]:
     """Store a conversation session and extract facts.
 
-    Returns a dict with ``session_id``, ``facts_stored``, ``message_count``.
+    Returns a dict with ``session_id``, ``facts_stored``, ``message_count``
+    and ``entities`` (unique entity names, in first-seen order).
     """
     path = _resolve_db_path(db_path)
+    init_db(db_path=path)  # idempotent; guarantees tables exist
     now = datetime.now(timezone.utc).isoformat()
 
     # Extract facts
@@ -178,10 +189,13 @@ def store_session(
     conn.commit()
     conn.close()
 
+    entities = list(dict.fromkeys(f["entity"] for f in facts))
+
     return {
         "session_id": session_id,
         "facts_stored": len(facts),
         "message_count": len(messages),
+        "entities": entities,
     }
 
 
@@ -194,16 +208,20 @@ def recall(
     query: str,
     top_k: int = 5,
     db_path: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Recall facts relevant to *query* via keyword search.
 
+    If ``session_id`` is given, only facts from that session are searched.
+
     Returns a dict with ``relevant_context`` (formatted string),
-    ``facts`` (list of dicts), ``query``.
+    ``facts`` (list of dicts), ``source_sessions`` and ``query``.
     """
     path = _resolve_db_path(db_path)
+    empty = {"relevant_context": "", "facts": [], "source_sessions": [], "query": query}
 
     if not os.path.exists(path):
-        return {"relevant_context": "", "facts": [], "query": query}
+        return empty
 
     conn = sqlite3.connect(path)
     cursor = conn.cursor()
@@ -213,7 +231,7 @@ def recall(
 
     if not keywords:
         conn.close()
-        return {"relevant_context": "", "facts": [], "query": query}
+        return empty
 
     # Build a WHERE clause matching any keyword in entity or target
     conditions = []
@@ -222,7 +240,10 @@ def recall(
         conditions.append("(LOWER(entity) LIKE ? OR LOWER(target) LIKE ?)")
         params.extend([f"%{kw}%", f"%{kw}%"])
 
-    where_clause = " OR ".join(conditions)
+    where_clause = "(" + " OR ".join(conditions) + ")"
+    if session_id:
+        where_clause += " AND session_id = ?"
+        params.append(session_id)
 
     cursor.execute(
         f"""SELECT entity, relation, target, session_id, timestamp, source_llm
@@ -257,9 +278,12 @@ def recall(
     else:
         relevant_context = ""
 
+    source_sessions = list(dict.fromkeys(f["session_id"] for f in facts))
+
     return {
         "relevant_context": relevant_context,
         "facts": facts,
+        "source_sessions": source_sessions,
         "query": query,
     }
 
@@ -274,6 +298,7 @@ def delete_memory(db_path: Optional[str] = None) -> Dict[str, str]:
     path = _resolve_db_path(db_path)
 
     if not os.path.exists(path):
+        init_db(db_path=path)
         return {"status": "no database found"}
 
     conn = sqlite3.connect(path)

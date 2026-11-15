@@ -42,6 +42,10 @@ const dom = {
   btnCopyText: $('btn-copy-text'),
   toggleAutoinject: $('toggle-autoinject'),
 
+  sectionCompress: $('section-compress'),
+  compressTextarea: $('compress-textarea'),
+  btnCopyCompressed: $('btn-copy-compressed'),
+
   sectionRecall: $('section-recall'),
   recallInput: $('recall-input'),
   btnRecallSearch: $('btn-recall-search'),
@@ -53,6 +57,10 @@ const dom = {
   statusOllama: $('status-ollama'),
   statusLlmlingua: $('status-llmlingua'),
   btnClearMemory: $('btn-clear-memory'),
+  toggleSelectorUpdates: $('toggle-selector-updates'),
+  selectorStatus: $('selector-status'),
+  btnCheckSelectors: $('btn-check-selectors'),
+  btnCopyDiagnostics: $('btn-copy-diagnostics'),
   feedbackSettings: $('feedback-settings'),
 };
 
@@ -83,7 +91,7 @@ function generateSessionId() {
 // --------------- BACKEND CALLS ---------------
 async function checkHealth() {
   try {
-    const res = await fetch(`${backendUrl}/health`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${backendUrl}/health`, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) throw new Error('Not OK');
     const data = await res.json();
 
@@ -92,6 +100,8 @@ async function checkHealth() {
     dom.bannerOffline.classList.add('hidden');
     dom.btnSave.disabled = false;
     dom.btnRecall.disabled = false;
+    dom.btnCompress.disabled = false;
+    dom.btnHandoff.disabled = false;
 
     // Update service statuses
     if (data.ollama !== undefined) {
@@ -109,6 +119,8 @@ async function checkHealth() {
     dom.statusDot.className = 'status-dot disconnected';
     dom.bannerOffline.classList.remove('hidden');
     dom.btnSave.disabled = true;
+    dom.btnCompress.disabled = true;
+    dom.btnHandoff.disabled = true;
     // Keep recall button enabled but will show error
     dom.statusOllama.textContent = 'Unknown';
     dom.statusOllama.className = 'status-pill';
@@ -150,12 +162,44 @@ function updateTokenBar() {
   }
 }
 
-function updateModelInfo() {
-  if (currentSite) {
-    dom.modelInfo.textContent = `${currentSite.name} • ${currentSite.domain}`;
-  } else {
-    dom.modelInfo.textContent = 'No LLM site detected';
+const LAYER_LABELS = {
+  site: 'site rules',
+  attributes: 'auto-detected',
+  structural: 'auto-detected (layout)',
+  none: 'no conversation found',
+};
+
+let lastDiagnostics = null;
+
+function updateModelInfo(layer, count) {
+  if (!currentSite) {
+    dom.modelInfo.textContent = 'Open a chat page, then reopen this popup';
+    return;
   }
+  const how = LAYER_LABELS[layer] || '';
+  const msgs = typeof count === 'number' ? ` • ${count} msgs` : '';
+  dom.modelInfo.textContent = `${currentSite.name}${msgs}${how ? ' • ' + how : ''}`;
+  dom.modelInfo.title =
+    layer === 'none'
+      ? 'Could not find chat messages on this page. Use Settings → Copy diagnostics to report it.'
+      : `Read using ${how}`;
+}
+
+// Ask the tab's content script; if there is none (a site not in the
+// manifest), inject the scraper on demand. activeTab grants this for the
+// current tab only, because the user opened the popup on it.
+async function requestConversation(tab) {
+  try {
+    return await chrome.tabs.sendMessage(tab.id, { type: 'GET_CONVERSATION' });
+  } catch {
+    // no content script yet
+  }
+  if (!/^https?:/.test(tab.url || '')) return null;
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ['scraper.js', 'content.js'],
+  });
+  return chrome.tabs.sendMessage(tab.id, { type: 'GET_CONVERSATION' });
 }
 
 // --------------- LOAD CONVERSATION DATA ---------------
@@ -164,18 +208,75 @@ async function loadConversationData() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
 
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_CONVERSATION' });
+    const response = await requestConversation(tab);
     if (response) {
       currentConversation = response.messages || [];
       currentSite = response.site || null;
       tokenCount = response.tokenCount || 0;
       contextWindow = response.contextWindow || 0;
+      lastDiagnostics = response.diagnostics || null;
       updateTokenBar();
-      updateModelInfo();
+      updateModelInfo(response.layer, currentConversation.length);
+    } else {
+      dom.modelInfo.textContent = 'ContextLayer cannot read this page';
     }
   } catch {
-    // Content script not injected on this tab
-    dom.modelInfo.textContent = 'Navigate to a supported LLM site';
+    // e.g. chrome:// pages, the Web Store, or PDF viewers cannot be scripted
+    dom.modelInfo.textContent = 'ContextLayer cannot read this page';
+  }
+}
+
+// --------------- SELECTOR UPDATES & DIAGNOSTICS ---------------
+function describeSelectorStatus(status) {
+  if (!status) return 'Never checked';
+  const when = status.lastCheck ? new Date(status.lastCheck).toLocaleString() : '';
+  const v = status.currentVersion ? `v${status.currentVersion}` : '';
+  if (status.result === 'updated') return `Updated to ${v} (${when})`;
+  if (status.result === 'up-to-date') return `Up to date, ${v} (${when})`;
+  if (status.result === 'disabled') return 'Auto-update off';
+  if (status.result === 'error') return `Using ${v || 'bundled'}; last check failed (${when})`;
+  return v;
+}
+
+async function refreshSelectorStatus() {
+  const { cl_selector_status: status, cl_auto_update_selectors: auto } = await chrome.storage.local.get([
+    'cl_selector_status',
+    'cl_auto_update_selectors',
+  ]);
+  dom.toggleSelectorUpdates.checked = auto !== false;
+  dom.selectorStatus.textContent = describeSelectorStatus(status);
+}
+
+async function handleSelectorToggle() {
+  await chrome.storage.local.set({ cl_auto_update_selectors: dom.toggleSelectorUpdates.checked });
+  await refreshSelectorStatus();
+}
+
+async function handleCheckSelectors() {
+  dom.btnCheckSelectors.disabled = true;
+  try {
+    const status = await chrome.runtime.sendMessage({ type: 'CHECK_SELECTOR_UPDATES' });
+    dom.selectorStatus.textContent = describeSelectorStatus(status);
+    if (status && status.result === 'updated') await loadConversationData();
+  } catch (err) {
+    showFeedback(dom.feedbackSettings, `Check failed: ${err.message}`, 'error');
+  } finally {
+    dom.btnCheckSelectors.disabled = false;
+  }
+}
+
+async function handleCopyDiagnostics() {
+  // Counts and selector names only — never message text
+  const report = {
+    diagnostics: lastDiagnostics,
+    userAgent: navigator.userAgent,
+    when: new Date().toISOString(),
+  };
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+    showFeedback(dom.feedbackSettings, 'Diagnostics copied (no message text included)', 'success');
+  } catch {
+    showFeedback(dom.feedbackSettings, 'Failed to copy diagnostics', 'error');
   }
 }
 
@@ -194,16 +295,30 @@ async function handleCompress() {
   try {
     const data = await fetchFromBackend('/compress', {
       method: 'POST',
+      // First LLMLingua run may download its model; allow extra time
+      timeoutMs: 120000,
       body: JSON.stringify({
         messages: currentConversation,
         preserve_last_n: 4,
       }),
     });
 
-    const savedPct = data.saved_percent || data.compression_ratio || 0;
-    dom.tokenBadge.textContent = `${Math.round(savedPct)}% saved`;
+    const savedPct = Math.max(0, Math.round(data.saved_percent || 0));
+    dom.tokenBadge.textContent = `${savedPct}% saved`;
     dom.tokenBadge.classList.add('visible');
-    showFeedback(dom.feedbackCompress, `Compressed! ${Math.round(savedPct)}% tokens saved`, 'success');
+
+    // Show the compressed conversation so it can be pasted into a new chat
+    const compressedText = (data.compressed_messages || [])
+      .map((m) => `${(m.role || 'unknown').toUpperCase()}: ${m.content || ''}`)
+      .join('\n\n');
+    dom.compressTextarea.value = compressedText;
+    dom.sectionCompress.classList.remove('hidden');
+
+    showFeedback(
+      dom.feedbackCompress,
+      `Compressed ${data.original_tokens} → ${data.compressed_tokens} tokens (${savedPct}% saved, ${data.method})`,
+      'success'
+    );
   } catch (err) {
     showFeedback(dom.feedbackCompress, `Compress failed: ${err.message}`, 'error');
   } finally {
@@ -225,7 +340,7 @@ async function handleHandoff() {
     const sessionId = generateSessionId();
     const data = await fetchFromBackend('/handoff', {
       method: 'POST',
-      timeoutMs: 60000,
+      timeoutMs: 150000,
       body: JSON.stringify({
         messages: currentConversation,
         session_id: sessionId,
@@ -314,21 +429,43 @@ async function handleRecallSearch() {
       body: JSON.stringify({ query }),
     });
 
-    const results = data.results || data.memories || [];
-    if (results.length === 0) {
-      dom.recallResults.innerHTML = '<div class="recall-item">No memories found for this query.</div>';
+    const facts = data.facts || [];
+    if (facts.length === 0) {
+      dom.recallResults.appendChild(makeRecallItem(null, 'No memories found for this query.'));
     } else {
-      dom.recallResults.innerHTML = results
-        .map(
-          (r) =>
-            `<div class="recall-item"><strong>${r.source || 'Memory'}</strong>: ${r.content || r.text || JSON.stringify(r)}</div>`
-        )
-        .join('');
+      for (const f of facts) {
+        const label = f.source_llm ? `${f.source_llm}` : 'Memory';
+        const text = `${f.entity} ${String(f.relation || '').replace(/_/g, ' ')} ${f.target}`;
+        dom.recallResults.appendChild(makeRecallItem(label, text));
+      }
     }
   } catch (err) {
     showFeedback(dom.feedbackRecall, `Recall failed: ${err.message}`, 'error');
   } finally {
     setButtonLoading(dom.btnRecallSearch, dom.spinnerRecall, false);
+  }
+}
+
+// Build a recall result row without innerHTML (content comes from web pages)
+function makeRecallItem(label, text) {
+  const item = document.createElement('div');
+  item.className = 'recall-item';
+  if (label) {
+    const strong = document.createElement('strong');
+    strong.textContent = label;
+    item.appendChild(strong);
+    item.appendChild(document.createTextNode(': '));
+  }
+  item.appendChild(document.createTextNode(text));
+  return item;
+}
+
+async function handleCopyCompressed() {
+  try {
+    await navigator.clipboard.writeText(dom.compressTextarea.value);
+    showFeedback(dom.feedbackCompress, 'Compressed conversation copied', 'success');
+  } catch {
+    showFeedback(dom.feedbackCompress, 'Failed to copy to clipboard', 'error');
   }
 }
 
@@ -373,6 +510,7 @@ async function handleClearMemory() {
 
   try {
     await fetchFromBackend('/memory', { method: 'DELETE' });
+    dom.recallResults.textContent = '';
     showFeedback(dom.feedbackSettings, 'All memory cleared', 'success');
   } catch (err) {
     showFeedback(dom.feedbackSettings, `Clear failed: ${err.message}`, 'error');
@@ -387,9 +525,13 @@ function bindEvents() {
   dom.btnRecall.addEventListener('click', handleRecall);
   dom.btnRecallSearch.addEventListener('click', handleRecallSearch);
   dom.btnCopyHandoff.addEventListener('click', handleCopyHandoff);
+  dom.btnCopyCompressed.addEventListener('click', handleCopyCompressed);
   dom.toggleAutoinject.addEventListener('change', handleAutoInjectToggle);
   dom.btnSettings.addEventListener('click', toggleSettings);
   dom.btnClearMemory.addEventListener('click', handleClearMemory);
+  dom.toggleSelectorUpdates.addEventListener('change', handleSelectorToggle);
+  dom.btnCheckSelectors.addEventListener('click', handleCheckSelectors);
+  dom.btnCopyDiagnostics.addEventListener('click', handleCopyDiagnostics);
 
   // Save backend URL on blur or Enter
   dom.inputBackendUrl.addEventListener('blur', handleBackendUrlChange);
@@ -434,6 +576,7 @@ async function init() {
 
   // Load conversation data from active tab
   await loadConversationData();
+  await refreshSelectorStatus();
 }
 
 document.addEventListener('DOMContentLoaded', init);

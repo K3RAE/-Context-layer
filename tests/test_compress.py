@@ -5,7 +5,6 @@ Covers: compress_conversation, rule_based_compress, count_tokens.
 All tests work without LLMLingua-2 installed (they exercise the rule-based path).
 """
 
-import pytest
 import sys
 import os
 
@@ -36,9 +35,6 @@ def test_compress_reduces_tokens(large_conversation):
         {"role": "assistant", "content": "Repeated answer here with sufficient content."},
         {"role": "assistant", "content": "Repeated answer here with sufficient content."},  # duplicate → removed
     ]
-
-    original_text = "\n".join(m["content"] for m in compressible)
-    original_tokens = count_tokens(original_text)
 
     result = compress_conversation(compressible, preserve_last_n=4)
 

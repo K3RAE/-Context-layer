@@ -8,13 +8,15 @@ clear ``False`` / ``None`` / empty-list instead of a crash.
 
 Environment
 -----------
-OLLAMA_URL  –  Base URL for the Ollama server (default ``http://localhost:11434``).
+OLLAMA_URL      Base URL for the Ollama server (default ``http://127.0.0.1:11434``).
+OLLAMA_MODEL    Optional: force a specific installed model.
+OLLAMA_TIMEOUT  Optional: generation timeout in seconds (default 120).
 """
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from typing import Optional
 
 import httpx
@@ -25,12 +27,26 @@ logger = logging.getLogger("contextlayer.ollama")
 # Configuration
 # ---------------------------------------------------------------------------
 
-OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
-# Model priority lists keyed by logical task name.
+
+def base_url() -> str:
+    """Ollama base URL, read at call time so ``.env`` values are honoured."""
+    return (os.getenv("OLLAMA_URL") or DEFAULT_OLLAMA_URL).rstrip("/")
+
+
+# Model priority lists keyed by logical task name.  Matching is by prefix, so
+# "llama3.2:3b" also matches "llama3.2:3b-instruct-q4_0".
 _MODEL_PRIORITY: dict[str, list[str]] = {
-    "compression": ["phi3:mini", "phi3:latest", "llama3.2:3b"],
-    "handoff": ["llama3.2:3b", "phi3:mini", "phi3:latest"],
+    "compression": ["qwen2.5:0.5b", "qwen2:0.5b", "phi3:mini", "llama3.2:3b"],
+    "handoff": [
+        "llama3.2:3b",
+        "llama3.1:8b",
+        "qwen2.5:3b",
+        "phi3:mini",
+        "qwen2.5:0.5b",
+        "qwen2:0.5b",
+    ],
 }
 
 
@@ -40,119 +56,85 @@ _MODEL_PRIORITY: dict[str, list[str]] = {
 
 
 async def is_available() -> bool:
-    """Check whether the Ollama server is reachable.
-
-    Sends a lightweight GET to ``/api/tags`` with a 3-second timeout.
-    Returns ``True`` if the server responds with HTTP 200, ``False`` otherwise.
-    """
+    """Return ``True`` if the Ollama server answers ``/api/tags`` within 3s."""
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.get(f"{OLLAMA_URL}/api/tags")
+            resp = await client.get(f"{base_url()}/api/tags")
             return resp.status_code == 200
     except Exception:
-        logger.debug("Ollama is not reachable at %s", OLLAMA_URL)
+        logger.debug("Ollama is not reachable at %s", base_url())
         return False
 
 
 async def get_available_models() -> list[str]:
-    """Return the list of model names currently loaded in Ollama.
-
-    Parses the ``models[].name`` field from the ``/api/tags`` response.
-    Returns an empty list if Ollama is unreachable or returns unexpected data.
-    """
+    """Return the names of models installed in Ollama (empty list on failure)."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{OLLAMA_URL}/api/tags")
+            resp = await client.get(f"{base_url()}/api/tags")
             resp.raise_for_status()
-            data = resp.json()
-            models = data.get("models", [])
-            return [m["name"] for m in models if "name" in m]
+            models = resp.json().get("models", [])
+            return [m["name"] for m in models if isinstance(m, dict) and "name" in m]
     except Exception as exc:
-        logger.warning("Failed to fetch Ollama models: %s", exc)
+        logger.debug("Failed to fetch Ollama models: %s", exc)
         return []
 
 
 def get_best_model(task: str, available_models: list[str]) -> Optional[str]:
-    """Pick the best locally-available model for a given task.
+    """Pick the best locally-installed model for ``task``.
 
-    Parameters
-    ----------
-    task:
-        One of ``'compression'``, ``'handoff'``, or ``'memory'``.
-    available_models:
-        Model name strings reported by Ollama (e.g. ``['llama3.2:3b', …]``).
-
-    Returns
-    -------
-    str | None
-        The first matching model name from the priority list, or ``None`` if
-        none of the preferred models are available locally.
+    Returns the ``OLLAMA_MODEL`` override if set and installed, otherwise the
+    first match from the priority list, otherwise the first installed model.
+    Returns ``None`` only when no models are installed.
     """
-    try:
-        priority = _MODEL_PRIORITY.get(task, _MODEL_PRIORITY["handoff"])
+    if not available_models:
+        return None
 
-        # Normalise available model names for substring matching so that
-        # a pulled model like "llama3.2:3b-instruct-q4_0" still matches the
-        # priority entry "llama3.2:3b".
-        for preferred in priority:
-            for available in available_models:
-                if preferred in available or available in preferred:
-                    return available
-    except httpx.ConnectError:
-        return None
-    except httpx.TimeoutException:
-        return None
-    except Exception:
-        return None
-    return None
+    forced = (os.getenv("OLLAMA_MODEL") or "").strip()
+    if forced:
+        for available in available_models:
+            if available == forced or available.startswith(forced):
+                return available
+        logger.warning("OLLAMA_MODEL=%s is not installed; picking automatically.", forced)
+
+    priority = _MODEL_PRIORITY.get(task, _MODEL_PRIORITY["handoff"])
+    for preferred in priority:
+        for available in available_models:
+            if available == preferred or available.startswith(preferred):
+                return available
+    return available_models[0]
 
 
 async def generate(
     prompt: str,
     system_prompt: str = "",
     model: Optional[str] = None,
+    json_mode: bool = False,
 ) -> str:
     """Generate a completion from Ollama.
 
-    Parameters
-    ----------
-    prompt:
-        The user / main prompt text.
-    system_prompt:
-        Optional system-level instruction prepended to the generation context.
-    model:
-        Specific model name to use.  If ``None`` the function will attempt to
-        pick the best available model for a generic task.
-
-    Returns
-    -------
-    str
-        The generated text.  Returns an empty string on any failure so the
-        caller can fall back to a rule-based approach.
+    Returns the generated text, or an empty string on any failure so the
+    caller can fall back to a rule-based approach.
     """
     if model is None:
-        available = await get_available_models()
-        model = get_best_model("handoff", available)
+        model = get_best_model("handoff", await get_available_models())
         if model is None:
-            logger.warning("No suitable Ollama model found — returning empty response.")
+            logger.warning("No Ollama models installed; returning empty response.")
             return ""
 
-    payload: dict = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-    }
+    payload: dict = {"model": model, "prompt": prompt, "stream": False}
     if system_prompt:
         payload["system"] = system_prompt
+    if json_mode:
+        payload["format"] = "json"
 
+    timeout = float(os.getenv("OLLAMA_TIMEOUT") or os.getenv("LLM_TIMEOUT") or 120)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(f"{OLLAMA_URL}/api/generate", json=payload)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(f"{base_url()}/api/generate", json=payload)
             resp.raise_for_status()
-            data = resp.json()
-            return data.get("response", "")
+            return resp.json().get("response", "")
     except httpx.TimeoutException:
-        logger.error("Ollama generation timed out (model=%s).", model)
+        logger.error("Ollama generation timed out after %ss (model=%s).", timeout, model)
         return ""
     except Exception as exc:
         logger.error("Ollama generation failed: %s", exc)

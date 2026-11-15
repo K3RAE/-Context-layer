@@ -109,7 +109,7 @@ class HandoffResponse(BaseModel):
     )
     method: str = Field(
         default="ollama",
-        description="Method used to generate the handoff: 'ollama' or 'rule_based'.",
+        description="Method used: 'ollama', 'openai' (OpenAI-compatible server) or 'rule_based'.",
     )
 
 
@@ -179,6 +179,12 @@ class HealthResponse(BaseModel):
     graphiti: bool = Field(
         default=False, description="Whether the Graphiti knowledge-graph backend is available."
     )
+    llm_provider: str = Field(
+        default="none",
+        description="LLM provider handoffs will use: 'ollama', 'openai' or 'none' (rule-based).",
+    )
+    llm_available: bool = Field(default=False, description="Whether that provider is reachable.")
+    llm_models: list[str] = Field(default_factory=list, description="Models the provider lists.")
     memory_db: str = Field(..., description="Path to the SQLite memory database.")
     uptime_seconds: float = Field(..., description="Seconds since the backend started.")
 

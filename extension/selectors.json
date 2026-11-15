@@ -1,0 +1,171 @@
+{
+  "schema": 1,
+  "version": 2,
+  "updated": "2026-11-15",
+  "notes": "Per-site CSS selectors, newest markup first. Bump 'version' when editing: installed extensions fetch this file from the main branch daily and use it if its version is higher than theirs. Sites with empty lists rely on automatic detection. Checked live on 2026-11-15: ChatGPT, Claude, Gemini. Perplexity and the others rely on auto-detection; use 'Copy diagnostics' in the popup to report breakage.",
+  "sites": {
+    "claude.ai": {
+      "name": "Claude",
+      "contextWindow": 200000,
+      "user": [
+        "[data-testid=\"user-message\"]",
+        "[data-testid=\"human-turn\"]"
+      ],
+      "assistant": [
+        "[data-testid=\"assistant-message\"]",
+        ".font-claude-response",
+        ".font-claude-message",
+        "[data-testid=\"ai-turn\"]"
+      ],
+      "composer": [
+        "div[contenteditable=\"true\"].ProseMirror",
+        "div[contenteditable=\"true\"]"
+      ]
+    },
+    "chatgpt.com": {
+      "name": "ChatGPT",
+      "contextWindow": 128000,
+      "user": [
+        "[data-message-author-role=\"user\"]",
+        "[data-content-search-unit-key$=\":user\"]",
+        "[data-chatgpt-search-unit-key$=\":user\"]"
+      ],
+      "assistant": [
+        "[data-message-author-role=\"assistant\"]",
+        "[data-content-search-unit-key$=\":assistant\"]",
+        "[data-chatgpt-search-unit-key$=\":assistant\"]"
+      ],
+      "composer": [
+        "#prompt-textarea",
+        "textarea[data-id=\"root\"]"
+      ]
+    },
+    "chat.openai.com": {
+      "name": "ChatGPT",
+      "contextWindow": 128000,
+      "user": [
+        "[data-message-author-role=\"user\"]",
+        "[data-content-search-unit-key$=\":user\"]",
+        "[data-chatgpt-search-unit-key$=\":user\"]"
+      ],
+      "assistant": [
+        "[data-message-author-role=\"assistant\"]",
+        "[data-content-search-unit-key$=\":assistant\"]",
+        "[data-chatgpt-search-unit-key$=\":assistant\"]"
+      ],
+      "composer": [
+        "#prompt-textarea",
+        "textarea[data-id=\"root\"]"
+      ]
+    },
+    "gemini.google.com": {
+      "name": "Gemini",
+      "contextWindow": 1000000,
+      "user": [
+        "user-query",
+        ".user-query-text",
+        ".query-text"
+      ],
+      "assistant": [
+        "model-response",
+        ".model-response-text",
+        "message-content"
+      ],
+      "composer": [
+        ".ql-editor",
+        "rich-textarea div[contenteditable=\"true\"]"
+      ]
+    },
+    "aistudio.google.com": {
+      "name": "Google AI Studio",
+      "contextWindow": 1000000,
+      "user": [],
+      "assistant": [],
+      "composer": []
+    },
+    "perplexity.ai": {
+      "name": "Perplexity",
+      "contextWindow": 128000,
+      "user": [
+        ".user-message"
+      ],
+      "assistant": [
+        ".answer-text"
+      ],
+      "composer": [
+        "textarea[placeholder]",
+        "div[contenteditable=\"true\"]"
+      ]
+    },
+    "grok.com": {
+      "name": "Grok",
+      "contextWindow": 131072,
+      "user": [
+        "[data-testid=\"user-message\"]"
+      ],
+      "assistant": [
+        "[data-testid=\"assistant-message\"]"
+      ],
+      "composer": [
+        "textarea",
+        "div[contenteditable=\"true\"]"
+      ]
+    },
+    "chat.deepseek.com": {
+      "name": "DeepSeek",
+      "contextWindow": 128000,
+      "user": [],
+      "assistant": [],
+      "composer": []
+    },
+    "chat.mistral.ai": {
+      "name": "Le Chat (Mistral)",
+      "contextWindow": 128000,
+      "user": [],
+      "assistant": [],
+      "composer": []
+    },
+    "copilot.microsoft.com": {
+      "name": "Microsoft Copilot",
+      "contextWindow": 128000,
+      "user": [],
+      "assistant": [],
+      "composer": []
+    },
+    "poe.com": {
+      "name": "Poe",
+      "contextWindow": 128000,
+      "user": [],
+      "assistant": [],
+      "composer": []
+    },
+    "meta.ai": {
+      "name": "Meta AI",
+      "contextWindow": 128000,
+      "user": [],
+      "assistant": [],
+      "composer": []
+    },
+    "chat.qwen.ai": {
+      "name": "Qwen Chat",
+      "contextWindow": 128000,
+      "user": [],
+      "assistant": [],
+      "composer": []
+    },
+    "huggingface.co": {
+      "name": "HuggingChat",
+      "contextWindow": 32000,
+      "user": [],
+      "assistant": [],
+      "composer": []
+    },
+    "kimi.com": {
+      "name": "Kimi",
+      "contextWindow": 128000,
+      "user": [],
+      "assistant": [],
+      "composer": []
+    }
+  }
+}

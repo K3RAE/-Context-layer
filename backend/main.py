@@ -2,46 +2,60 @@
 ContextLayer — FastAPI Application
 ====================================
 
-The main entry-point for the ContextLayer backend.  Exposes five endpoints:
+The main entry-point for the ContextLayer backend.  Exposes:
 
-- ``POST /compress``  — compress a conversation history
-- ``POST /handoff``   — generate a structured context handoff
-- ``POST /remember``  — extract and store knowledge from a conversation
-- ``POST /recall``    — search stored knowledge
-- ``DELETE /memory``  — wipe all stored knowledge
-- ``GET  /health``    — subsystem health check
+- ``POST   /compress``  — compress a conversation history
+- ``POST   /handoff``   — generate a structured context handoff
+- ``POST   /remember``  — extract and store knowledge from a conversation
+- ``POST   /recall``    — search stored knowledge
+- ``DELETE /memory``    — wipe all stored knowledge
+- ``GET    /health``    — subsystem health check
 
-Run with::
+Run with (from the ``backend`` directory)::
 
-    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    python main.py
+    # or
+    uvicorn main:app --host 127.0.0.1 --port 8000
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
-import traceback
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+# Make sibling modules importable no matter where the app is launched from
+# (``uvicorn main:app`` inside backend/, ``uvicorn backend.main:app`` from the
+# repo root, or the test-suite).
+_BACKEND_DIR = Path(__file__).resolve().parent
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
+from dotenv import load_dotenv  # noqa: E402
+from fastapi import FastAPI, Request  # noqa: E402
+from fastapi.concurrency import run_in_threadpool  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Environment & logging
 # ---------------------------------------------------------------------------
 
-load_dotenv()
+# Load backend/.env explicitly so the working directory does not matter.
+# Real environment variables take precedence over the file.
+load_dotenv(_BACKEND_DIR / ".env")
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
 )
 logger = logging.getLogger("contextlayer")
 
 # ---------------------------------------------------------------------------
-# Lazy imports — each subsystem might be unavailable and that's fine.
+# Optional subsystems — each might be unavailable and that's fine.
 # ---------------------------------------------------------------------------
 
 _compressor_available = False
@@ -50,34 +64,42 @@ _memory_available = False
 _ollama_module_available = False
 
 try:
-    import compressor  # noqa: F401
+    import compressor
 
     _compressor_available = True
-except Exception as exc:
+except Exception as exc:  # pragma: no cover - depends on environment
     logger.warning("Compressor module unavailable: %s", exc)
 
 try:
-    import handoff  # noqa: F401
+    import handoff
 
     _handoff_available = True
-except Exception as exc:
+except Exception as exc:  # pragma: no cover
     logger.warning("Handoff module unavailable: %s", exc)
 
 try:
-    import memory  # noqa: F401
+    import memory
 
     _memory_available = True
-except Exception as exc:
+except Exception as exc:  # pragma: no cover
     logger.warning("Memory module unavailable: %s", exc)
 
 try:
-    import ollama_client  # noqa: F401
+    import ollama_client
 
     _ollama_module_available = True
-except Exception as exc:
+except Exception as exc:  # pragma: no cover
     logger.warning("Ollama client module unavailable: %s", exc)
 
-# Import Pydantic models (always expected to be present).
+_llm_module_available = False
+try:
+    import llm_client
+    import openai_client
+
+    _llm_module_available = True
+except Exception as exc:  # pragma: no cover
+    logger.warning("LLM provider module unavailable: %s", exc)
+
 from models import (  # noqa: E402
     CompressRequest,
     CompressResponse,
@@ -96,66 +118,77 @@ from models import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 _STARTUP_TIME = time.time()
+__version__ = "1.1.0"
+
+
+def _mark(ok: bool) -> str:
+    return "OK" if ok else "unavailable"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Initialise subsystems once at startup and log their status."""
+    global _memory_available
+    if _memory_available:
+        try:
+            memory.init_db()
+            logger.info("Memory DB ready at %s", memory._resolve_db_path())
+        except Exception as exc:
+            logger.error("Memory DB init failed: %s", exc)
+            _memory_available = False
+
+    logger.info("-" * 50)
+    logger.info("ContextLayer backend v%s starting up", __version__)
+    logger.info("  Compressor : %s", _mark(_compressor_available))
+    logger.info(
+        "  LLMLingua  : %s",
+        _mark(_compressor_available and getattr(compressor, "LLMLINGUA_AVAILABLE", False)),
+    )
+    logger.info("  Handoff    : %s", _mark(_handoff_available))
+    logger.info("  Memory     : %s", _mark(_memory_available))
+    if _llm_module_available:
+        logger.info("  LLM mode   : %s", llm_client.configured_provider())
+        logger.info("  Ollama     : %s", ollama_client.base_url())
+        if openai_client.is_configured():
+            logger.info("  OpenAI API : %s", openai_client.base_url())
+    logger.info("-" * 50)
+    yield
+
 
 app = FastAPI(
     title="ContextLayer API",
     description="Local-first context compression, handoff, and memory for LLM conversations.",
-    version="1.0.0",
+    version=__version__,
+    lifespan=lifespan,
 )
 
-# CORS — allow Chrome extensions and localhost dev servers.
+# CORS — allow the Chrome extension and localhost dev pages only.
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"(chrome-extension://.*|http://localhost:.*)",
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origin_regex=r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$",
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 
 # ---------------------------------------------------------------------------
-# Global exception handler
+# Error handling
 # ---------------------------------------------------------------------------
 
 
 @app.exception_handler(Exception)
 async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Catch any unhandled exception and return a structured JSON error.
-
-    This guarantees the API never crashes with an opaque 500 HTML page.
-    """
-    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
+    """Return structured JSON instead of an opaque 500 page (no stack traces)."""
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content={
-            "error": str(exc),
-            "detail": traceback.format_exc(),
-        },
+        content={"error": "Internal server error", "detail": str(exc)},
     )
 
 
-# ---------------------------------------------------------------------------
-# Startup event
-# ---------------------------------------------------------------------------
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    """Run once when the server starts: initialise subsystems and log status."""
-    if _memory_available:
-        try:
-            memory.init_db()
-            logger.info("✅  Memory DB initialised.")
-        except Exception as exc:
-            logger.error("❌  Memory DB init failed: %s", exc)
-
-    logger.info("─" * 50)
-    logger.info("ContextLayer backend starting up")
-    logger.info("  Compressor : %s", "✅" if _compressor_available else "❌")
-    logger.info("  Handoff    : %s", "✅" if _handoff_available else "❌")
-    logger.info("  Memory     : %s", "✅" if _memory_available else "❌")
-    logger.info("  Ollama mod : %s", "✅" if _ollama_module_available else "❌")
-    logger.info("─" * 50)
+def _unavailable(name: str) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"error": f"{name} subsystem is not available."})
 
 
 # ---------------------------------------------------------------------------
@@ -164,20 +197,18 @@ async def _startup() -> None:
 
 
 @app.post("/compress", response_model=CompressResponse)
-async def compress_endpoint(req: CompressRequest) -> CompressResponse:
+async def compress_endpoint(req: CompressRequest):
     """Compress a conversation's older messages to reduce token count.
 
     Preserves the most recent ``preserve_last_n`` messages verbatim and
-    compresses the rest using LLMLingua-2 (preferred) or rule-based
-    heuristics (fallback).
+    compresses the rest using LLMLingua-2 (if installed) or rule-based
+    heuristics.  Runs in a worker thread because LLMLingua is CPU-bound.
     """
     if not _compressor_available:
-        return JSONResponse(  # type: ignore[return-value]
-            status_code=503,
-            content={"error": "Compressor subsystem is not available."},
-        )
+        return _unavailable("Compressor")
 
-    result = compressor.compress_conversation(
+    result = await run_in_threadpool(
+        compressor.compress_conversation,
         messages=req.messages,
         preserve_last_n=req.preserve_last_n,
     )
@@ -185,39 +216,23 @@ async def compress_endpoint(req: CompressRequest) -> CompressResponse:
 
 
 @app.post("/handoff", response_model=HandoffResponse)
-async def handoff_endpoint(req: HandoffRequest) -> HandoffResponse:
-    """Generate a structured context handoff from a conversation.
-
-    Uses Ollama for intelligent extraction when available, otherwise falls
-    back to deterministic heuristics.
-    """
+async def handoff_endpoint(req: HandoffRequest):
+    """Generate a structured context handoff from a conversation."""
     if not _handoff_available:
-        return JSONResponse(  # type: ignore[return-value]
-            status_code=503,
-            content={"error": "Handoff subsystem is not available."},
-        )
+        return _unavailable("Handoff")
 
-    result = await handoff.generate_handoff(
-        messages=req.messages,
-        session_id=req.session_id,
-    )
+    result = await handoff.generate_handoff(messages=req.messages, session_id=req.session_id)
     return HandoffResponse(**result)
 
 
 @app.post("/remember", response_model=RememberResponse)
-async def remember_endpoint(req: RememberRequest) -> RememberResponse:
-    """Extract knowledge from a conversation and store it in the memory DB.
-
-    Entities, relations, and targets are persisted as fact triples so they
-    can be recalled later via ``/recall``.
-    """
+async def remember_endpoint(req: RememberRequest):
+    """Extract knowledge from a conversation and store it in the memory DB."""
     if not _memory_available:
-        return JSONResponse(  # type: ignore[return-value]
-            status_code=503,
-            content={"error": "Memory subsystem is not available."},
-        )
+        return _unavailable("Memory")
 
-    result = await memory.store_session(
+    result = await run_in_threadpool(
+        memory.store_session,
         session_id=req.session_id,
         messages=req.messages,
         source_llm=req.source_llm,
@@ -226,76 +241,80 @@ async def remember_endpoint(req: RememberRequest) -> RememberResponse:
 
 
 @app.post("/recall", response_model=RecallResponse)
-async def recall_endpoint(req: RecallRequest) -> RecallResponse:
-    """Search stored knowledge for facts relevant to a query.
-
-    Returns both a human-readable summary and the raw fact triples.
-    """
+async def recall_endpoint(req: RecallRequest):
+    """Search stored knowledge for facts relevant to a query."""
     if not _memory_available:
-        return JSONResponse(  # type: ignore[return-value]
-            status_code=503,
-            content={"error": "Memory subsystem is not available."},
-        )
+        return _unavailable("Memory")
 
-    result = await memory.recall(
+    result = await run_in_threadpool(
+        memory.recall,
         query=req.query,
-        session_id=req.session_id,
         top_k=req.top_k,
+        session_id=req.session_id,
     )
     return RecallResponse(**result)
 
 
 @app.delete("/memory", response_model=DeleteMemoryResponse)
-async def delete_memory_endpoint() -> DeleteMemoryResponse:
+async def delete_memory_endpoint():
     """Wipe all stored knowledge — drops and recreates the fact tables."""
     if not _memory_available:
-        return JSONResponse(  # type: ignore[return-value]
-            status_code=503,
-            content={"error": "Memory subsystem is not available."},
-        )
+        return _unavailable("Memory")
 
-    result = memory.clear_memory()
-    return DeleteMemoryResponse(**result)
+    result = await run_in_threadpool(memory.delete_memory)
+    return DeleteMemoryResponse(deleted=True, message=result.get("status", "memory cleared"))
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_endpoint() -> HealthResponse:
-    """Return the health status of every subsystem.
-
-    Checks Ollama reachability, LLMLingua availability, memory DB status,
-    and reports server uptime.
-    """
+async def health_endpoint():
+    """Return the health status of every subsystem."""
     ollama_ok = False
     ollama_models: list[str] = []
-
-    if _ollama_module_available:
+    llm = None
+    if _llm_module_available:
         try:
-            ollama_ok = await ollama_client.is_available()
-            if ollama_ok:
-                ollama_models = await ollama_client.get_available_models()
+            # one concurrent probe per provider (keeps /health fast)
+            llm, ollama_status = await llm_client.status_all()
+            ollama_ok = ollama_status.available
+            ollama_models = ollama_status.models
         except Exception:
-            pass
+            llm = None
 
-    llmlingua_ok = False
-    if _compressor_available:
-        try:
-            llmlingua_ok = getattr(compressor, "LLMLINGUA_AVAILABLE", False)
-        except Exception:
-            pass
+    llmlingua_ok = bool(_compressor_available and getattr(compressor, "LLMLINGUA_AVAILABLE", False))
+    memory_db_path = str(memory._resolve_db_path()) if _memory_available else ""
 
-    memory_db_path = ""
-    if _memory_available:
-        memory_db_path = str(memory._resolve_db_path())
-
-    all_ok = ollama_ok or _compressor_available or _memory_available
-    status = "ok" if all_ok else "degraded"
-
+    core_ok = _compressor_available and _handoff_available and _memory_available
     return HealthResponse(
-        status=status,
+        status="ok" if core_ok else "degraded",
         ollama=ollama_ok,
         ollama_models=ollama_models,
         llmlingua=llmlingua_ok,
         graphiti=False,
+        llm_provider=llm.provider if llm and llm.available else "none",
+        llm_available=bool(llm and llm.available),
+        llm_models=llm.models if llm else [],
         memory_db=memory_db_path,
         uptime_seconds=round(time.time() - _STARTUP_TIME, 2),
     )
+
+
+# ---------------------------------------------------------------------------
+# ``python main.py`` entry point
+# ---------------------------------------------------------------------------
+
+
+def run() -> None:
+    import uvicorn
+
+    host = os.getenv("BACKEND_HOST", "127.0.0.1")
+    port = int(os.getenv("BACKEND_PORT", "8000"))
+    reload = os.getenv("BACKEND_RELOAD", "").lower() in ("1", "true", "yes")
+    logger.info("Serving on http://%s:%s", host, port)
+    if reload:
+        uvicorn.run("main:app", host=host, port=port, reload=True, app_dir=str(_BACKEND_DIR))
+    else:
+        uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    run()

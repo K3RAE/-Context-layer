@@ -1,36 +1,45 @@
 {
   "manifest_version": 3,
   "name": "ContextLayer",
-  "version": "1.0.0",
-  "description": "Compress LLM conversations, persist memory, and enable seamless handoff between different LLMs.",
+  "version": "1.2.0",
+  "description": "Compress, hand off and remember LLM conversations across AI chat sites. Works on any chat page you open it on.",
   "permissions": [
     "activeTab",
     "storage",
     "scripting",
     "tabs",
-    "clipboardWrite"
+    "clipboardWrite",
+    "alarms"
   ],
   "host_permissions": [
     "*://claude.ai/*",
+    "*://chatgpt.com/*",
     "*://chat.openai.com/*",
     "*://gemini.google.com/*",
     "*://perplexity.ai/*",
-    "*://grok.com/*"
+    "*://*.perplexity.ai/*",
+    "*://grok.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {
       "matches": [
         "*://claude.ai/*",
+        "*://chatgpt.com/*",
         "*://chat.openai.com/*",
         "*://gemini.google.com/*",
         "*://perplexity.ai/*",
+        "*://*.perplexity.ai/*",
         "*://grok.com/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "scraper.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],

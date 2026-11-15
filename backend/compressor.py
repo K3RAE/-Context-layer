@@ -6,8 +6,8 @@ Token counting via tiktoken (cl100k_base).
 """
 
 import logging
-import re
-from typing import List, Dict, Any, Tuple
+import os
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("contextlayer.compressor")
 
@@ -21,10 +21,16 @@ try:
 except Exception:
     _ENCODER = None
 
-# Probe whether llmlingua is importable (used by /health endpoint)
+# Probe whether llmlingua is installed (used by /health).  find_spec avoids
+# importing torch at startup; the real import happens lazily on first use.
+def _llmlingua_enabled() -> bool:
+    return os.getenv("LLMLINGUA_ENABLED", "true").strip().lower() not in ("0", "false", "no")
+
+
 try:
-    from llmlingua import PromptCompressor as _PromptCompressorProbe  # noqa: F401
-    LLMLINGUA_AVAILABLE = True
+    import importlib.util
+
+    LLMLINGUA_AVAILABLE = _llmlingua_enabled() and importlib.util.find_spec("llmlingua") is not None
 except Exception:
     LLMLINGUA_AVAILABLE = False
 
@@ -45,15 +51,18 @@ def count_tokens(text: str) -> int:
 # ---------------------------------------------------------------------------
 
 _llmlingua_compressor = None
+_llmlingua_failed = False
 
 
 def _get_llmlingua():
-    global _llmlingua_compressor
+    global _llmlingua_compressor, _llmlingua_failed
     if _llmlingua_compressor is not None:
         return _llmlingua_compressor
+    if _llmlingua_failed:
+        return None
     try:
         from llmlingua import PromptCompressor
-        import os
+
         model_name = os.getenv(
             "LLMLINGUA_MODEL",
             "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
@@ -69,7 +78,8 @@ def _get_llmlingua():
         logger.info("LLMLingua-2 model loaded successfully.")
         return _llmlingua_compressor
     except Exception as exc:
-        logger.warning("LLMLingua-2 init failed: %s", exc)
+        logger.warning("LLMLingua-2 init failed, using rule-based compression: %s", exc)
+        _llmlingua_failed = True
         return None
 
 
@@ -115,7 +125,7 @@ def rule_based_compress(
     tail = messages[-preserve_last_n:] if preserve_last_n > 0 else []
 
     compressed: List[Dict[str, str]] = []
-    prev_assistant_content: str | None = None
+    prev_assistant_content: Optional[str] = None
 
     for msg in head:
         role = msg.get("role", "")
@@ -223,8 +233,8 @@ def compress_conversation(
                     "method": "llmlingua2",
                     "preserve_last_n": preserve_last_n,
                 }
-        except Exception:
-            pass  # fall through to rule-based
+        except Exception as exc:
+            logger.warning("LLMLingua-2 compression failed, falling back: %s", exc)
 
     # Rule-based fallback
     compressed_msgs = rule_based_compress(messages, preserve_last_n=preserve_last_n)
