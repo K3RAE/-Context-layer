@@ -91,6 +91,15 @@ try:
 except Exception as exc:  # pragma: no cover
     logger.warning("Ollama client module unavailable: %s", exc)
 
+_llm_module_available = False
+try:
+    import llm_client
+    import openai_client
+
+    _llm_module_available = True
+except Exception as exc:  # pragma: no cover
+    logger.warning("LLM provider module unavailable: %s", exc)
+
 from models import (  # noqa: E402
     CompressRequest,
     CompressResponse,
@@ -137,7 +146,11 @@ async def lifespan(_app: FastAPI):
     )
     logger.info("  Handoff    : %s", _mark(_handoff_available))
     logger.info("  Memory     : %s", _mark(_memory_available))
-    logger.info("  Ollama     : %s", ollama_client.base_url() if _ollama_module_available else "n/a")
+    if _llm_module_available:
+        logger.info("  LLM mode   : %s", llm_client.configured_provider())
+        logger.info("  Ollama     : %s", ollama_client.base_url())
+        if openai_client.is_configured():
+            logger.info("  OpenAI API : %s", openai_client.base_url())
     logger.info("-" * 50)
     yield
 
@@ -266,6 +279,13 @@ async def health_endpoint():
         except Exception:
             pass
 
+    llm = None
+    if _llm_module_available:
+        try:
+            llm = await llm_client.resolve()
+        except Exception:
+            llm = None
+
     llmlingua_ok = bool(_compressor_available and getattr(compressor, "LLMLINGUA_AVAILABLE", False))
     memory_db_path = str(memory._resolve_db_path()) if _memory_available else ""
 
@@ -276,6 +296,9 @@ async def health_endpoint():
         ollama_models=ollama_models,
         llmlingua=llmlingua_ok,
         graphiti=False,
+        llm_provider=llm.provider if llm and llm.available else "none",
+        llm_available=bool(llm and llm.available),
+        llm_models=llm.models if llm else [],
         memory_db=memory_db_path,
         uptime_seconds=round(time.time() - _STARTUP_TIME, 2),
     )

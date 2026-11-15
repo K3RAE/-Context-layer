@@ -34,6 +34,9 @@ async def _offline() -> bool:
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORY_DB_PATH", str(tmp_path / "api.db"))
     monkeypatch.setenv("LLMLINGUA_ENABLED", "false")
+    # Never talk to whatever LLM server happens to run on the dev machine
+    monkeypatch.setenv("LLM_PROVIDER", "auto")
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
     monkeypatch.setattr(ollama_client, "is_available", _offline)
     with TestClient(main.app) as c:
         yield c
@@ -45,6 +48,8 @@ def test_health(client, tmp_path):
     body = r.json()
     assert body["status"] == "ok"
     assert body["ollama"] is False
+    assert body["llm_provider"] == "none"
+    assert body["llm_available"] is False
     assert body["memory_db"] == str(tmp_path / "api.db")
 
 

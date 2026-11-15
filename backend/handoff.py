@@ -2,12 +2,13 @@
 ContextLayer — Handoff Generator
 
 Generates structured handoff notes from conversations.
-Uses Ollama for intelligent extraction with a rule-based fallback.
+Uses a local LLM (Ollama or any OpenAI-compatible server, see llm_client)
+for intelligent extraction, with a rule-based fallback.
 """
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Field schema
@@ -89,42 +90,73 @@ def _parse_json_object(raw: str) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Ollama-based handoff
+# LLM-based handoff (Ollama or any OpenAI-compatible server)
 # ---------------------------------------------------------------------------
 
 
-async def ollama_handoff(messages: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
-    """Try to generate a structured handoff via Ollama. Returns None on failure."""
+def conversation_for_prompt(messages: List[Dict[str, str]], max_tokens: int) -> str:
+    """Render the conversation, keeping it within ``max_tokens``.
+
+    Small local models have small context windows, so long chats are cut
+    down to the first user message (the task) plus as many of the most
+    recent messages as fit, with a marker where messages were left out.
+    """
+    lines = [f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in messages]
+    full = "\n".join(lines)
+    if _count_tokens(full) <= max_tokens:
+        return full
+
+    first_user = next((i for i, m in enumerate(messages) if m.get("role") == "user"), 0)
+    head = lines[first_user]
+    if _count_tokens(head) > max_tokens // 4:
+        head = head[: max_tokens]  # ~4 chars/token, so this is at most ~1/4 budget
+
+    budget = max_tokens - _count_tokens(head) - 20
+    tail: List[str] = []
+    for line in reversed(lines[first_user + 1:]):
+        cost = _count_tokens(line)
+        if cost > budget:
+            if not tail:  # always keep part of the latest message
+                tail.append(line[: max(0, budget) * 4])
+            break
+        tail.append(line)
+        budget -= cost
+    tail.reverse()
+    omitted = len(lines) - first_user - 1 - len(tail)
+    marker = [f"[... {omitted} earlier messages omitted ...]"] if omitted > 0 else []
+    return "\n".join([head] + marker + tail)
+
+
+async def llm_handoff(messages: List[Dict[str, str]]) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Try to generate a structured handoff with the configured LLM provider.
+
+    Returns ``(structured_or_None, provider_name)``.
+    """
     if not messages:
-        return None
+        return None, "none"
     try:
-        import ollama_client
+        import llm_client
     except Exception:
-        return None
+        return None, "none"
 
     try:
-        if not await ollama_client.is_available():
-            return None
-        models = await ollama_client.get_available_models()
-        model = ollama_client.get_best_model("handoff", models)
-        if model is None:
-            return None
-
-        conversation_text = "\n".join(
-            f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in messages
-        )
-        raw = await ollama_client.generate(
+        conversation_text = conversation_for_prompt(messages, llm_client.max_prompt_tokens())
+        raw, provider = await llm_client.generate_json(
             prompt=f"Analyze this conversation:\n\n{conversation_text}",
             system_prompt=HANDOFF_SYSTEM_PROMPT,
-            model=model,
-            json_mode=True,
         )
         parsed = _parse_json_object(raw)
         if parsed is None:
-            return None
-        return normalize_structured(parsed)
+            return None, provider
+        return normalize_structured(parsed), provider
     except Exception:
-        return None
+        return None, "none"
+
+
+async def ollama_handoff(messages: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+    """Backwards-compatible alias for :func:`llm_handoff`."""
+    structured, _provider = await llm_handoff(messages)
+    return structured
 
 
 # ---------------------------------------------------------------------------
@@ -256,17 +288,17 @@ async def generate_handoff(
     ``token_count``, ``method``, ``session_id``.
     """
     try:
-        ollama_result = await ollama_handoff(messages)
+        llm_result, provider = await llm_handoff(messages)
     except Exception:
-        ollama_result = None
+        llm_result, provider = None, "none"
 
-    if ollama_result is not None:
-        handoff_note = _format_handoff_note(ollama_result)
+    if llm_result is not None:
+        handoff_note = _format_handoff_note(llm_result)
         return {
-            "structured": ollama_result,
+            "structured": llm_result,
             "handoff_note": handoff_note,
             "token_count": _count_tokens(handoff_note),
-            "method": "ollama",
+            "method": provider,
             "session_id": session_id,
         }
 

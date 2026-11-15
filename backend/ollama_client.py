@@ -127,7 +127,7 @@ async def generate(
     if json_mode:
         payload["format"] = "json"
 
-    timeout = float(os.getenv("OLLAMA_TIMEOUT") or 120)
+    timeout = float(os.getenv("OLLAMA_TIMEOUT") or os.getenv("LLM_TIMEOUT") or 120)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{base_url()}/api/generate", json=payload)

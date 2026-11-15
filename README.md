@@ -57,15 +57,22 @@ To install without starting, run `setup.bat` / `./setup.sh`. Options:
 3. Click **Load unpacked** and choose the **`extension`** folder of this repo.
 4. Pin the ContextLayer icon. Open a chat on a supported site and click it.
 
-### 4. (Optional) Ollama for smarter handoffs
+### 4. (Optional) A local LLM for smarter handoffs
 
-Install Ollama from <https://ollama.com>, then:
+Without an LLM, every feature still works using rule-based logic. With one,
+handoff notes become real summaries. Use **either**:
 
-```bash
-ollama pull llama3.2:3b
-```
+- **Ollama.** Install it from <https://ollama.com> and run `ollama pull llama3.2:3b`. It is detected automatically.
+- **Any OpenAI-compatible server**, such as [LM Studio](https://lmstudio.ai), the llama.cpp server, [Jan](https://jan.ai), LocalAI or vLLM. Start its local server, then set the URL in `backend/.env`:
 
-The backend detects it automatically. Set `OLLAMA_MODEL` in `backend/.env` to force a model.
+  ```ini
+  OPENAI_BASE_URL=http://localhost:1234/v1   # LM Studio's default
+  OPENAI_MODEL=                               # optional; blank = first listed model
+  ```
+
+`LLM_PROVIDER=auto` uses the OpenAI-compatible server if it is set and running,
+then Ollama, then rule-based. You can force one with `ollama`, `openai` or `none`.
+`/health` shows which provider is active.
 
 ---
 
@@ -95,9 +102,14 @@ All settings live in `backend/.env` (copied from [`backend/.env.example`](backen
 | `BACKEND_HOST` | `127.0.0.1` | Interface to bind. The API has no auth, so keep it local |
 | `BACKEND_PORT` | `8000` | Port |
 | `BACKEND_RELOAD` | `false` | Auto-reload on code changes (development) |
+| `LLM_PROVIDER` | `auto` | `auto`, `ollama`, `openai` or `none` |
+| `OPENAI_BASE_URL` | *(blank)* | OpenAI-compatible server, e.g. `http://localhost:1234/v1` |
+| `OPENAI_API_KEY` | *(blank)* | Only if your server needs one |
+| `OPENAI_MODEL` | *(auto)* | Model id to use |
+| `LLM_MAX_PROMPT_TOKENS` | `6000` | Long chats are trimmed to this size before being sent to the model |
+| `LLM_TIMEOUT` | `120` | Seconds to wait for the model |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server |
 | `OLLAMA_MODEL` | *(auto)* | Force a specific Ollama model |
-| `OLLAMA_TIMEOUT` | `120` | Seconds to wait for Ollama |
 | `MEMORY_DB_PATH` | `~/.contextlayer/memory.db` | SQLite memory database |
 | `LLMLINGUA_ENABLED` | `true` | Use LLMLingua-2 if it is installed |
 | `LOG_LEVEL` | `INFO` | Logging level |
