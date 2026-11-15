@@ -51,8 +51,8 @@ jobs:
 
       - name: Smoke test - start server and hit /health
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then PY=.venv/Scripts/python; else PY=.venv/bin/python; fi
-          (cd backend && $PY main.py > ../server.log 2>&1 &)
+          # Same command start.bat / start.sh run
+          python scripts/manage.py start > server.log 2>&1 &
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8000/health; then echo; exit 0; fi
             sleep 1
