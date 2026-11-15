@@ -17,6 +17,7 @@ rule-based logic.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
@@ -60,25 +61,45 @@ async def _ollama_status() -> ProviderStatus:
     return ProviderStatus("ollama", available, models, ollama_client.base_url())
 
 
-async def resolve() -> ProviderStatus:
-    """Return the provider that would be used right now."""
+async def status_all() -> tuple[ProviderStatus, ProviderStatus]:
+    """Probe the relevant providers once each, concurrently.
+
+    Returns ``(chosen, ollama_status)``. Probing in parallel matters: on
+    Windows a refused connection takes ~2 s, so sequential probes made
+    /health slower than the popup's timeout.
+    """
     choice = configured_provider()
     if choice == "none":
-        return ProviderStatus()
-    if choice == "openai":
-        return await _openai_status()
-    if choice == "ollama":
-        return await _ollama_status()
+        return ProviderStatus(), ProviderStatus("ollama")
 
-    # auto
-    if openai_client.is_configured():
-        status = await _openai_status()
-        if status.available:
-            return status
-    status = await _ollama_status()
-    if status.available:
-        return status
-    return ProviderStatus()
+    async def ollama() -> ProviderStatus:
+        if choice in ("auto", "ollama"):
+            return await _ollama_status()
+        return ProviderStatus("ollama")
+
+    async def openai() -> ProviderStatus:
+        if choice in ("auto", "openai"):
+            return await _openai_status()
+        return ProviderStatus("openai")
+
+    oll, oai = await asyncio.gather(ollama(), openai())
+
+    if choice == "openai":
+        return oai, oll
+    if choice == "ollama":
+        return oll, oll
+    # auto: an explicitly configured OpenAI-compatible server wins
+    if oai.available:
+        return oai, oll
+    if oll.available:
+        return oll, oll
+    return ProviderStatus(), oll
+
+
+async def resolve() -> ProviderStatus:
+    """Return the provider that would be used right now."""
+    chosen, _ollama = await status_all()
+    return chosen
 
 
 def max_prompt_tokens() -> int:

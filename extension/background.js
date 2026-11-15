@@ -122,9 +122,6 @@ function isSupportedSite(url) {
   }
 }
 
-// --------------- CONVERSATION DATA CACHE ---------------
-let cachedConversationData = null;
-
 // --------------- TAB EVENT LISTENERS ---------------
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
@@ -235,23 +232,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'CHECK_SELECTOR_UPDATES') {
     checkForSelectorUpdate({ force: true }).then(sendResponse);
     return true;
-  }
-
-  if (message.type === 'CONVERSATION_DATA') {
-    cachedConversationData = {
-      messages: message.messages,
-      tokenCount: message.tokenCount,
-      contextWindow: message.contextWindow,
-      site: message.site,
-      warningLevel: message.warningLevel,
-      timestamp: Date.now(),
-    };
-    return false;
-  }
-
-  if (message.type === 'GET_CONVERSATION_CACHED') {
-    sendResponse(cachedConversationData);
-    return false;
   }
 
   return false;

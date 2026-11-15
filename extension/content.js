@@ -10,9 +10,17 @@
 (function () {
   'use strict';
 
-  // Injected twice (manifest + on-demand)? Keep the first instance.
-  if (window.__contextLayerContentLoaded) return;
-  window.__contextLayerContentLoaded = true;
+  // Injected twice (manifest + on-demand)? Keep the first instance, unless
+  // it belongs to a previous load of the extension (orphaned after an
+  // extension reload/update), in which case this new instance takes over.
+  if (typeof window.__contextLayerAlive === 'function' && window.__contextLayerAlive()) return;
+  window.__contextLayerAlive = () => {
+    try {
+      return !!(chrome.runtime && chrome.runtime.id);
+    } catch (_err) {
+      return false;
+    }
+  };
 
   const Scraper = window.ContextLayerScraper;
   if (!Scraper) {
@@ -72,33 +80,7 @@
     };
   }
 
-  // --------------- MUTATION OBSERVER (debounced) ---------------
-  let scrapeTimeout = null;
-  let lastConversationData = null;
-
-  function debouncedScrape() {
-    if (scrapeTimeout) clearTimeout(scrapeTimeout);
-    scrapeTimeout = setTimeout(() => {
-      const data = getConversationData();
-      lastConversationData = data;
-      try {
-        const p = chrome.runtime.sendMessage({
-          type: 'CONVERSATION_DATA',
-          messages: data.messages,
-          tokenCount: data.tokenCount,
-          contextWindow: data.contextWindow,
-          site: data.site,
-          warningLevel: data.warningLevel,
-        });
-        if (p && typeof p.catch === 'function') p.catch(() => {});
-      } catch (_err) {
-        // extension reloaded — this script is orphaned; stop observing
-        observer.disconnect();
-      }
-    }, 1500);
-  }
-
-  const observer = new MutationObserver(debouncedScrape);
+  // The page is only read when the popup asks (no background polling).
 
   // --------------- MESSAGE LISTENER ---------------
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -109,11 +91,7 @@
 
     if (message.type === 'GET_CONVERSATION') {
       // Always scrape fresh when the popup asks (after the config has loaded)
-      const respond = () => {
-        const data = getConversationData();
-        lastConversationData = data;
-        sendResponse(data);
-      };
+      const respond = () => sendResponse(getConversationData());
       if (selectorConfig) {
         respond();
         return false;
@@ -137,7 +115,6 @@
 
     if (message.type === 'SELECTOR_CONFIG_UPDATED') {
       selectorConfig = message.config || selectorConfig;
-      debouncedScrape();
       return false;
     }
 
@@ -168,10 +145,6 @@
 
   // --------------- START ---------------
   loadConfig().then((cfg) => {
-    selectorConfig = cfg;
-    if (document.body) {
-      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    }
-    debouncedScrape();
+    selectorConfig = selectorConfig || cfg;
   });
 })();

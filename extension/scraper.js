@@ -31,20 +31,28 @@
   const MAX_ELEMENTS_SCANNED = 20000;
   const DEFAULT_CONTEXT_WINDOW = 128000;
 
-  const USER_TOKENS = new Set([
-    'user', 'human', 'you', 'me', 'mine', 'self', 'query', 'question', 'prompt',
-    'request', 'outgoing', 'sent', 'author',
-  ]);
+  const USER_TOKENS = new Set(['user', 'human', 'query', 'question', 'prompt', 'request', 'outgoing']);
   const ASSISTANT_TOKENS = new Set([
     'assistant', 'bot', 'ai', 'model', 'answer', 'response', 'reply', 'llm',
-    'agent', 'incoming', 'received', 'gpt', 'chatgpt', 'claude', 'gemini',
+    'agent', 'incoming', 'gpt', 'chatgpt', 'claude', 'gemini',
     'copilot', 'grok', 'mistral', 'llama', 'deepseek', 'qwen', 'perplexity',
   ]);
-  // Tokens that look like hints but describe UI chrome, not messages.
+  // A role word only counts next to a message-like word ("user-message",
+  // "model-response", "UserBubble"); this filters out utility classes such
+  // as "user-select-none" and attribute names such as data-user-id.
+  const COMPANION_TOKENS = new Set([
+    'message', 'msg', 'turn', 'bubble', 'chat', 'entry', 'text', 'content', 'block',
+    'query', 'question', 'prompt', 'request', 'response', 'answer', 'reply',
+    'container', 'item', 'row', 'card', 'group', 'part', 'segment',
+  ]);
+  // Exact attribute values that name a role on their own (data-role="user").
+  const EXACT_USER = new Set(['user', 'human']);
+  const EXACT_ASSISTANT = new Set(['assistant', 'bot', 'ai', 'model']);
+  // Tokens that describe UI chrome, not messages.
   const NOISE_TOKENS = new Set([
     'avatar', 'icon', 'name', 'menu', 'button', 'btn', 'input', 'composer',
-    'settings', 'profile', 'account', 'tooltip', 'badge', 'label', 'action',
-    'actions', 'toolbar', 'feedback', 'copy', 'edit', 'sidebar', 'nav',
+    'settings', 'profile', 'account', 'tooltip', 'badge', 'action',
+    'actions', 'toolbar', 'feedback', 'copy', 'edit', 'sidebar', 'nav', 'select',
   ]);
   const EXCLUDED_ZONES =
     'nav, header, footer, aside, form, button, select, textarea, script, style, noscript, ' +
@@ -81,31 +89,45 @@
       .filter(Boolean);
   }
 
-  /** Classify an element by the role hints in its own attributes. */
+  /** Role named by one hint string (a class, tag name or attribute value). */
+  function classifyHint(str) {
+    const tokens = tokenize(str);
+    if (!tokens.length || tokens.some((t) => NOISE_TOKENS.has(t))) return null;
+    const userToks = tokens.filter((t) => USER_TOKENS.has(t));
+    const asstToks = tokens.filter((t) => ASSISTANT_TOKENS.has(t));
+    if (userToks.length && asstToks.length) return null; // ambiguous
+    const roleToks = userToks.length ? userToks : asstToks;
+    if (!roleToks.length) return null;
+    // need a message-like word besides the (single) role word
+    const hasCompanion = tokens.some(
+      (t) => COMPANION_TOKENS.has(t) && !(roleToks.length === 1 && roleToks[0] === t)
+    );
+    if (!hasCompanion) return null;
+    return userToks.length ? 'user' : 'assistant';
+  }
+
+  /** Classify an element by the role hints in its own markup. */
   function roleHint(el) {
-    const tokens = [];
-    tokens.push(...tokenize(el.getAttribute('class')));
-    tokens.push(...tokenize(el.tagName));
+    const hints = new Set();
+    const add = (role) => role && hints.add(role);
+
+    for (const cls of (el.getAttribute('class') || '').split(/\s+/)) {
+      if (cls) add(classifyHint(cls));
+    }
+    if (el.tagName.includes('-')) add(classifyHint(el.tagName)); // custom elements
     for (const attr of el.attributes) {
       const name = attr.name.toLowerCase();
-      if (name === 'class' || name === 'style' || name === 'href' || name === 'src') continue;
+      const value = attr.value.trim();
+      if (!value || value.length > 80) continue;
       if (name.startsWith('data-') || name === 'role' || name === 'aria-label' || name === 'id') {
-        tokens.push(...tokenize(name.replace(/^data-/, '')));
-        if (attr.value.length <= 80) tokens.push(...tokenize(attr.value));
+        // judge attributes by their value, never their name (data-user-id="42")
+        const v = value.toLowerCase();
+        if (name !== 'id' && EXACT_USER.has(v)) add('user');
+        else if (name !== 'id' && EXACT_ASSISTANT.has(v)) add('assistant');
+        else add(classifyHint(value));
       }
     }
-    if (tokens.some((t) => NOISE_TOKENS.has(t))) return null;
-    const isUser = tokens.some((t) => USER_TOKENS.has(t));
-    const isAssistant = tokens.some((t) => ASSISTANT_TOKENS.has(t));
-    if (isUser && !isAssistant) return 'user';
-    if (isAssistant && !isUser) return 'assistant';
-    // e.g. data-message-author-role="user": attribute value wins over name
-    for (const attr of el.attributes) {
-      const v = attr.value.toLowerCase();
-      if (/^(user|human)$/.test(v)) return 'user';
-      if (/^(assistant|bot|ai|model)$/.test(v)) return 'assistant';
-    }
-    return null;
+    return hints.size === 1 ? [...hints][0] : null;
   }
 
   function inExcludedZone(el) {
@@ -257,6 +279,10 @@
     const scope = doc.querySelector('main, [role="main"]') || doc.body;
     if (!scope) return { messages: [], detail: { container: null } };
 
+    // textContent length is cheap and good enough for ranking
+    const textLen = (el) => (el.textContent || '').trim().length;
+    const totalText = textLen(scope) || 1;
+
     let best = null;
     const all = [scope, ...scope.getElementsByTagName('*')];
     const limit = Math.min(all.length, MAX_ELEMENTS_SCANNED);
@@ -264,7 +290,7 @@
       const container = all[i];
       if (container.children.length < 2 || inExcludedZone(container)) continue;
       const textual = Array.from(container.children).filter(
-        (c) => !c.matches(EXCLUDED_ZONES) && getText(c).length > 0
+        (c) => !c.matches(EXCLUDED_ZONES) && textLen(c) > 0
       );
       if (textual.length < 2) continue;
 
@@ -274,19 +300,23 @@
         groups.set(sig, (groups.get(sig) || 0) + 1);
       }
       const top = Array.from(groups.entries()).sort((a, b) => b[1] - a[1]).slice(0, 2);
+      // a message list repeats: at least one block style must occur twice
+      if (top[0][1] < 2) continue;
       const topSigs = new Set(top.map(([s]) => s));
       const members = textual.filter((c) => topSigs.has(signature(c)));
-      // the message list should be mostly made of those blocks, and repeat
+      // ...and must be mostly made of those blocks
       if (members.length < 2 || members.length / textual.length < 0.6) continue;
-      if (top[0][1] < 2 && members.length < 3) continue;
 
-      const avgLen = members.reduce((n, c) => n + getText(c).length, 0) / members.length;
-      // depth bonus: prefer the most specific container on ties
+      // Rank by how much of the page's text the blocks cover: the real
+      // conversation covers nearly all of it, while the paragraphs inside a
+      // single long answer cover only part. Ties go to more blocks, then to
+      // the deeper (more specific) container.
+      const coverage = members.reduce((n, c) => n + textLen(c), 0) / totalText;
       let depth = 0;
       for (let p = container; p && p !== scope; p = p.parentElement) depth++;
-      const score = members.length * Math.log(1 + avgLen) + depth * 0.01;
+      const score = Math.round(coverage * 100) + members.length * 0.01 + depth * 0.0001;
       if (!best || score > best.score) {
-        best = { container, members, sigs: top.map(([s]) => s), score };
+        best = { container, members, sigs: top.map(([s]) => s), score, coverage };
       }
     }
 
@@ -392,7 +422,12 @@
       return { messages: attr.messages, layer: 'attributes', site, diagnostics: done(diagnostics, 'attributes') };
     }
 
-    const struct = scrapeStructural(doc);
+    // Layout detection has the weakest evidence, so it is only trusted on
+    // pages that have a chat input box (lists of search results, feeds, etc.
+    // also repeat blocks).
+    const hasComposer = !!findComposer(doc, site);
+    diagnostics.hasComposer = hasComposer;
+    const struct = hasComposer ? scrapeStructural(doc) : { messages: [], detail: { skipped: 'no chat input' } };
     diagnostics.layers.structural = Object.assign(countRoles(struct.messages), struct.detail);
     if (isPlausible(struct.messages)) {
       return { messages: struct.messages, layer: 'structural', site, diagnostics: done(diagnostics, 'structural') };

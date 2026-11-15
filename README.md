@@ -116,7 +116,7 @@ All settings live in `backend/.env` (copied from [`backend/.env.example`](backen
 | `OPENAI_MODEL` | *(auto)* | Model id to use |
 | `LLM_MAX_PROMPT_TOKENS` | `6000` | Long chats are trimmed to this size before being sent to the model |
 | `LLM_TIMEOUT` | `120` | Seconds to wait for the model |
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama server |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama server |
 | `OLLAMA_MODEL` | *(auto)* | Force a specific Ollama model |
 | `MEMORY_DB_PATH` | `~/.contextlayer/memory.db` | SQLite memory database |
 | `LLMLINGUA_ENABLED` | `true` | Use LLMLingua-2 if it is installed |
@@ -159,7 +159,7 @@ layer only counts if its result looks like a real conversation:
    candidates, newest markup first.
 2. **Attribute detection.** Works on any site. It finds messages by role hints
    in the markup, such as `user-message`, `data-role="assistant"`,
-   `model-response` or `aria-label="Your message"`, and ignores navigation,
+   `model-response` or `aria-label="User message"`, and ignores navigation,
    avatars and menus.
 3. **Layout detection.** Finds the list of repeated message blocks and assigns
    user/assistant roles from hints or alternation.

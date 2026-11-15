@@ -91,7 +91,7 @@ function generateSessionId() {
 // --------------- BACKEND CALLS ---------------
 async function checkHealth() {
   try {
-    const res = await fetch(`${backendUrl}/health`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${backendUrl}/health`, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) throw new Error('Not OK');
     const data = await res.json();
 

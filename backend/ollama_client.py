@@ -8,7 +8,7 @@ clear ``False`` / ``None`` / empty-list instead of a crash.
 
 Environment
 -----------
-OLLAMA_URL      Base URL for the Ollama server (default ``http://localhost:11434``).
+OLLAMA_URL      Base URL for the Ollama server (default ``http://127.0.0.1:11434``).
 OLLAMA_MODEL    Optional: force a specific installed model.
 OLLAMA_TIMEOUT  Optional: generation timeout in seconds (default 120).
 """
@@ -27,7 +27,7 @@ logger = logging.getLogger("contextlayer.ollama")
 # Configuration
 # ---------------------------------------------------------------------------
 
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 
 def base_url() -> str:

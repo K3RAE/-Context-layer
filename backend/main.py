@@ -270,19 +270,13 @@ async def health_endpoint():
     """Return the health status of every subsystem."""
     ollama_ok = False
     ollama_models: list[str] = []
-
-    if _ollama_module_available:
-        try:
-            ollama_ok = await ollama_client.is_available()
-            if ollama_ok:
-                ollama_models = await ollama_client.get_available_models()
-        except Exception:
-            pass
-
     llm = None
     if _llm_module_available:
         try:
-            llm = await llm_client.resolve()
+            # one concurrent probe per provider (keeps /health fast)
+            llm, ollama_status = await llm_client.status_all()
+            ollama_ok = ollama_status.available
+            ollama_models = ollama_status.models
         except Exception:
             llm = None
 

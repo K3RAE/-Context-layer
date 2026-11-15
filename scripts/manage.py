@@ -213,7 +213,7 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
     running = _port_in_use(host, port)
     print(f"  [--] Backend on port {port}: {'running' if running else 'not running'}")
 
-    ollama = env.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+    ollama = env.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
     try:
         with urllib.request.urlopen(f"{ollama}/api/tags", timeout=2) as resp:
             print(f"  [--] Ollama at {ollama}: reachable (HTTP {resp.status})")

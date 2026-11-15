@@ -129,6 +129,7 @@ test('structural layer: unknown site, no hints, two alternating block styles', (
         <div class="r a1">Another one</div>
         <div class="l b2">Grey clouds drift away / the garden drinks and listens / one last drop falls</div>
       </div>
+      <div contenteditable="true" aria-label="Write a message"></div>
     </div>`);
   const r = S.scrape(d, 'totally-unknown.example', config);
   assert.equal(r.layer, 'structural');
@@ -140,10 +141,72 @@ test('structural layer: identical blocks alternate starting with user', () => {
   const d = doc(`
     <section>
       <div class="m">q1</div><div class="m">a1</div><div class="m">q2</div><div class="m">a2</div>
-    </section>`);
+    </section>
+    <textarea></textarea>`);
   const r = S.scrape(d, 'x.example', config);
   assert.equal(r.layer, 'structural');
   assert.deepEqual(r.messages.map((m) => `${m.role}:${m.content}`), ['user:q1', 'assistant:a1', 'user:q2', 'assistant:a2']);
+});
+
+test('structural layer: picks the turns, not the paragraphs of one long answer', () => {
+  const paras = Array.from({ length: 8 }, (_, i) => `<p>Paragraph ${i} of a long explanation with plenty of words.</p>`).join('');
+  const d = doc(`
+    <div class="thread">
+      <div class="t">How do tides work?</div>
+      <div class="t"><div class="body">${paras}</div></div>
+      <div class="t">And neap tides?</div>
+      <div class="t">They happen at quarter moons.</div>
+    </div>
+    <textarea placeholder="Send a message"></textarea>`);
+  const r = S.scrape(d, 'x.example', config);
+  assert.equal(r.layer, 'structural');
+  assert.equal(r.messages.length, 4);
+  assert.deepEqual(r.messages.map((m) => m.role), ['user', 'assistant', 'user', 'assistant']);
+});
+
+test('fallback layers refuse pages without a chat input (not a chat)', () => {
+  const d = doc(`
+    <ul class="results">
+      <li class="row">First search result</li>
+      <li class="row">Second search result</li>
+      <li class="row">Third search result</li>
+    </ul>`);
+  const r = S.scrape(d, 'news.example', config);
+  assert.equal(r.layer, 'none');
+});
+
+test('utility classes are not role hints (Tailwind / Bootstrap)', () => {
+  const d = doc(`
+    <main>
+      <div class="flex self-end me-2" data-role="user">Question one</div>
+      <div data-role="assistant">Answer <span class="user-select-none">with code</span> and more</div>
+      <div class="flex self-end me-2" data-role="user">Question two</div>
+    </main>
+    <textarea aria-label="Message"></textarea>`);
+  const r = S.scrape(d, 'tailwind-chat.example', config);
+  assert.equal(r.layer, 'attributes');
+  assert.deepEqual(r.messages.map((m) => m.role), ['user', 'assistant', 'user']);
+  assert.match(r.messages[1].content, /with code/);
+});
+
+test('aria-label is a usable hint', () => {
+  const d = doc(`
+    <main>
+      <div aria-label="User message">Hi</div>
+      <div aria-label="Assistant response">Hello!</div>
+    </main>
+    <textarea></textarea>`);
+  const r = S.scrape(d, 'aria-chat.example', config);
+  assert.equal(r.layer, 'attributes');
+  assert.equal(r.messages.length, 2);
+});
+
+test('data-* names alone are not hints (data-user-id)', () => {
+  assert.equal(S.roleHint(doc('<div data-user-id="42"></div>').querySelector('div')), null);
+  assert.equal(S.roleHint(doc('<div class="user-select-none"></div>').querySelector('div')), null);
+  assert.equal(S.roleHint(doc('<div class="self-end me-2"></div>').querySelector('div')), null);
+  assert.equal(S.roleHint(doc('<div data-message-author-role="user"></div>').querySelector('div')), 'user');
+  assert.equal(S.roleHint(doc('<div class="font-claude-response"></div>').querySelector('div')), 'assistant');
 });
 
 // ---------------------------------------------------------------------------
